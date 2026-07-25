@@ -168,8 +168,8 @@ lensle SPOT, 406-412 geniş lensle WASH** karakterine bürünüyor — iki ayrı
 | Kare | Kaynak | Ne öğretiyor |
 |---|---|---|
 | `kare/al412-hedef-1.jpg` | OASE t=55 | jet tabanında noktasal LED parlaması; ışık jet gövdesini İÇERİDEN boyuyor; camgöbeği monokrom |
-| `kare/al412-hedef-2-gercek.jpg` | Aquatronic [GERÇEK], drydeck switch.mp4 t=32 | LED halka fiili görünüm: amber/altın halkalar jet tabanını aşırı parlak boyuyor, jet gövdesi tabandan yukarı sönümleniyor; sağda kırmızı halka — renk kanalı ayrışması; halo + mist etkileşimi |
-| `kare/al412c-406c-fark-karti.jpg` | Aquatronic ürün fotoğrafı [GERÇEK] | AL-412C/406C gövde referansı: flanşlı paslanmaz halka, 12 lens yuvası, merkez nozul deliği (LED sayısı/dizilim kıyası için, bkz. §3 S3) |
+| `kare/al412-hedef-2-gercek.jpg` | üretici görseli [GERÇEK], drydeck switch.mp4 t=32 | LED halka fiili görünüm: amber/altın halkalar jet tabanını aşırı parlak boyuyor, jet gövdesi tabandan yukarı sönümleniyor; sağda kırmızı halka — renk kanalı ayrışması; halo + mist etkileşimi |
+| `kare/al412c-406c-fark-karti.jpg` | üretici ürün fotoğrafı [GERÇEK] | AL-412C/406C gövde referansı: flanşlı paslanmaz halka, 12 lens yuvası, merkez nozul deliği (LED sayısı/dizilim kıyası için, bkz. §3 S3) |
 | `kare/al406412-hedef-1.jpg` | OASE t=90 | geniş renk yıkaması: amber/mor/pembe/yeşil yelpaze modülleri + beyaz LED taban hattı; renk bloklarının yan yana ayrışması — WASH konfigürasyonunun hedefi |
 
 ### Bu turda uygulanacak efektler (envanterden, C bölümü)

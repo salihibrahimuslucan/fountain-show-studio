@@ -72,8 +72,8 @@ kullandığı türetilmiş parametreler `studio/data/katalog.js` içindedir.
 |---|---|---|
 | `kare/jump-hedef-1.jpg` | OASE t=85 | nokta-nokta ark geometrisi + parlak kırmızı uçlu ince arklar |
 | `kare/jump-hedef-2-temsili.jpg` | Higgsfield [TEMSİLİ] | cam boru dokusu: pürüzsüz şeffaf laminer ark, içten tek renk aydınlatma, parlayan nozul tabanı, sprey/köpük YOK |
-| `kare/jump-hedef-3-gercek.jpg` | Aquatronic [GERÇEK], jump.mp4 t=37.5 | tam ark fazı: 4 camgöbeği laminer ark X kesişimi; ark gövdesi cam gibi kesintisiz, ışık TÜM ark boyunca taşınıyor (fiber etkisi); nozul diski zeminde aydınlık halka |
-| `kare/jump-hedef-4-gercek.jpg` | Aquatronic [GERÇEK], jump.mp4 t=24 | sıçrama/kesme anı: ark ortadan kopmuş, kopan uç parlayarak uçuyor, kuyruk nozula geri çekiliyor — "jumping jet" davranışının tanım karesi |
+| `kare/jump-hedef-3-gercek.jpg` | üretici görseli [GERÇEK], jump.mp4 t=37.5 | tam ark fazı: 4 camgöbeği laminer ark X kesişimi; ark gövdesi cam gibi kesintisiz, ışık TÜM ark boyunca taşınıyor (fiber etkisi); nozul diski zeminde aydınlık halka |
+| `kare/jump-hedef-4-gercek.jpg` | üretici görseli [GERÇEK], jump.mp4 t=24 | sıçrama/kesme anı: ark ortadan kopmuş, kopan uç parlayarak uçuyor, kuyruk nozula geri çekiliyor — "jumping jet" davranışının tanım karesi |
 
 ### Bu turda uygulanacak efektler
 

@@ -1,6 +1,6 @@
 // Motor — GPU su cihazları + AquaLIGHT halka aydınlatma (Ders 10 portu + v3).
 // v3 ışık devrimi (spec 2026-07-16-cihaz-gercekciligi §3): tiyatro spotu + hacimli
-// huzme + shader ışık-dizisi KALKTI — Aquatronic gerçeği nozul-altı 412C halka
+// huzme + shader ışık-dizisi KALKTI — donanım gerçeği nozul-altı 412C halka
 // LED'dir. Renk per-jet uniform'dan (T-C), halkanın zemine vuran ışığı IsikGolu'dan
 // gelir; bağımsız 412C = HalkaIsik cihazı, SAYI SINIRSIZ (per-device, dizi yok).
 import * as THREE from 'three';

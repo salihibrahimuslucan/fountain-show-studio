@@ -5,7 +5,7 @@
 //      başlarken oncekiDongu saklanır, kayitDurdur döngüyü GERİ KOYAR ve
 //      dongubtnGuncelle ile düğme metnini senkron tutar.
 //  (b) Marka overlay metinleri parametre (marka.baslik/altBaslik) — varsayılan
-//      Aquatronic; clean-room: müşteri/proje adı YOK.
+//      uygulama markası; clean-room: müşteri/proje adı YOK.
 // Kaynaktan iki uyarlama daha (ana.js bağlamı):
 //  - sesHedef GEÇ-BAĞLAMA getter'dır (() => MediaStreamDestination | null):
 //    ana.js AudioContext'i TEMBEL kurar — modül kurulurken null olabilir.
@@ -18,7 +18,7 @@
 // müzik O kayda girmez (bir sonraki kayıtta girer).
 
 export function kayitKur({ renderer, transport, sesHedef, mesaj, dongubtnGuncelle,
-                           marka = { baslik: 'AQUATRONIC', altBaslik: 'Show Studio — çeşme şovu önizlemesi' } }) {
+                           marka = { baslik: 'SHOW STUDIO', altBaslik: 'çeşme şovu önizlemesi' } }) {
   const kayitTuval = document.createElement('canvas');   // WebGL karesi + marka burada birleşir
   const kctx = kayitTuval.getContext('2d');
   let kaydediyor = false, recorder = null, kayitBitTimer = null, oncekiDongu = true, vstream = null;
@@ -71,7 +71,7 @@ export function kayitKur({ renderer, transport, sesHedef, mesaj, dongubtnGuncell
       const blob = new Blob(chunks, { type: 'video/webm' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url; a.download = 'aquatronic-show.webm';
+      a.href = url; a.download = 'show-studio.webm';
       a.click();                                         // kullanıcının kendi tıkının sonucu = indir
       setTimeout(() => URL.revokeObjectURL(url), 4000);
       mesaj(`video hazır (${(blob.size / 1e6).toFixed(1)} MB) — indiriliyor`);

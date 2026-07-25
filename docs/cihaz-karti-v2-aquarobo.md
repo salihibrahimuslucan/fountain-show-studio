@@ -62,9 +62,9 @@ kullandığı türetilmiş parametreler `studio/data/katalog.js` içindedir.
 | Kare | Kaynak | Ne öğretiyor |
 |---|---|---|
 | `kare/robo-hedef-1.jpg` | Bellagio t=103 | kavisli süpüren jet yayları ("oarsmen") tam süpürme fazında; yay ucu mist bırakıyor |
-| `kare/robo-hedef-2-gercek.jpg` | Aquatronic [GERÇEK] | süpürme fazı: çapraz eğik jetler X kesişen yay ailesi; jet tabanında LED halka parlaması; jet gövdesi ince, damla-dizili; kırmızı monokrom sahne + fasadın aynı renkle yıkanması |
-| `kare/robo-hedef-3-gercek.jpg` | Aquatronic [GERÇEK] | dikey faz: çift kolonlu ince jetler hafif eğimle yükseliyor, tepe uçları saçaklı; süpürmeden dik duruşa geçiş — 2 eksen hareket zarfının iki ucu |
-| `kare/robo-govde-gercek.jpg` | Aquatronic [GERÇEK] | gövde referansı: merkezde eğimli nozul borusu + iki yana mafsallı kolda **12'li LED halkaları**; sualtı gece çekiminde halkalar aşırı parlak disk |
+| `kare/robo-hedef-2-gercek.jpg` | üretici görseli [GERÇEK] | süpürme fazı: çapraz eğik jetler X kesişen yay ailesi; jet tabanında LED halka parlaması; jet gövdesi ince, damla-dizili; kırmızı monokrom sahne + fasadın aynı renkle yıkanması |
+| `kare/robo-hedef-3-gercek.jpg` | üretici görseli [GERÇEK] | dikey faz: çift kolonlu ince jetler hafif eğimle yükseliyor, tepe uçları saçaklı; süpürmeden dik duruşa geçiş — 2 eksen hareket zarfının iki ucu |
+| `kare/robo-govde-gercek.jpg` | üretici görseli [GERÇEK] | gövde referansı: merkezde eğimli nozul borusu + iki yana mafsallı kolda **12'li LED halkaları**; sualtı gece çekiminde halkalar aşırı parlak disk |
 
 spec-sheet-ozeti.md §12 (satır 629) bu dört kareyi zaten hareket zarfının iki
 ucu (süpürme ↔ dikey) olarak yorumluyor — motor.js'in pan/tilt mekanizması

@@ -1,7 +1,7 @@
 # Depence² referans analizi (v2 efekt çıtası)
 
 Kaynak: Salih'in verdiği "Depence 2 Demo GM.mp4" (3840×2160 60fps, 167 sn, 840MB —
-**repoya girmez**, `.gitignore`'da; yerel kopya `D:\Aquatronic\show-studio\`).
+**repoya girmez**, `.gitignore`'da; yerel kopya `D:\üretici\show-studio\`).
 Analiz: 12 sn arayla 14 kare, 2026-07-16. Telifli görüntü — kare repoya gömülmez,
 gözlemler metin olarak burada.
 
@@ -30,7 +30,7 @@ gözlemler metin olarak burada.
    (arka plan ışık lekeleri, kıyı dokusu, siluet sprite'ları) içermeli.
 
 5. **Yelpaze (fan) nozul — katalog adayı (T-E).** V-şekilli renkli yelpaze
-   matrisi ayrı cihaz tipi olarak sahnede (t≈84sn karesi). Aquatronic
+   matrisi ayrı cihaz tipi olarak sahnede (t≈84sn karesi). üretici
    karşılığıyla (fan jet) kataloğa eklenebilir.
 
 6. **Desen dili (T-C/T-D).** Tüm matris üzerinde rainbow gradyan süpürmesi,

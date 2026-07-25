@@ -36,7 +36,7 @@ Sınıf ayrımı sayıya oturuyor ve **üç bağımsız yol aynı noktada buluş
 
 | Yol | İnteraktif tavan |
 |---|---|
-| Aquatronic künyesi: VARIO DryDECK 0.3 bar × 6.0 m/bar | **1.80 m** |
+| üretici künyesi: VARIO DryDECK 0.3 bar × 6.0 m/bar | **1.80 m** |
 | 🔬 ISPSC 2021 §612.4.3 hız tavanı 6.1 m/s → h = v²/2g | **1.90 m** |
 | 🔬 Splash park sektör pratiği (6 ft dikey sınır) | **1.83 m** |
 
@@ -52,7 +52,7 @@ yani Bucket = katalogun bahsettiği "profesyonel, daha yüksek atan" şov sürü
 ürün kataloğuna aittir ve bu public sürümde yer almaz. Motorun simülasyon için
 kullandığı türetilmiş parametreler `studio/data/katalog.js` içindedir.
 
-## 2. Çapraz doğrulama — Aquatronic'in sayıları fizikle TUTUYOR
+## 2. Çapraz doğrulama — üreticinin sayıları fizikle TUTUYOR
 
 **① AquaSWITCH Ø14 debi tablosu saf Torricelli çıktı** (Cd ≈ 1.0):
 
@@ -66,7 +66,7 @@ kullandığı türetilmiş parametreler `studio/data/katalog.js` içindedir.
 
 **② Bucket gerçekten "kap"mış** 🔬. Fluidra'nın dry deck kılavuzu iki inşa sistemi
 tanımlıyor: nişli (su ayrı denge tankında) ve **"floating pavement / vessel"**
-(su doğrudan jetin altında bir kapta, derinlik **~0.5-0.6 m**). Aquatronic bucket'ın
+(su doğrudan jetin altında bir kapta, derinlik **~0.5-0.6 m**). üretici bucket'ın
 boyu **0.459 m**, hacmi **28.3 litre**. Aynı mertebe ✓. `URUN_KUNYE.md`'nin
 "kendi suyu" notu bunun karşılığı.
 
@@ -143,7 +143,7 @@ yazmıyor.** Kaynak taramasında çıktı 🔬:
 Delta Fountains dry deck kuyusu montajlarını birebir böyle sayıyor:
 *"Pop Jet Assembly with Smooth Bore Nozzle"* / *"Pop Jet Assembly with Foam Jet Nozzle"*.
 
-Aquatronic'in kendi AquaSWITCH tablosu bunu **doğruluyor** ⚠[TÜRETİM]:
+üreticinin kendi AquaSWITCH tablosu bunu **doğruluyor** ⚠[TÜRETİM]:
 
 | | Ø14 sütunu | Ø16 sütunu |
 |---|---|---|
@@ -237,7 +237,7 @@ yüzeyi varsayımıyla yazılmış. Islak-zemin modeli ayrı iş. → [ELLE] D8
 
 | Alan | Durum |
 |---|---|
-| **DMX kanal haritası** | **YOK.** IŞIK ve VARIO turlarında da bulunamamıştı; **üst üste üçüncü tur.** Aquatronic hiçbir üründe kanal listesi yayınlamıyor. |
+| **DMX kanal haritası** | **YOK.** IŞIK ve VARIO turlarında da bulunamamıştı; **üst üste üçüncü tur.** üretici hiçbir üründe kanal listesi yayınlamıyor. |
 | DryDECK ürün numaraları (PN) | YOK — `URUN_KUNYE.md` kendi eksik listesinde ilan ediyor |
 | **Maks su yüksekliği** | Dört varyantın **hiçbirinde** yazmıyor. VARIO/SWITCH ana ürünlerinde var, DryDECK'lerde yok. Bu kartın yükseklikleri **basınçtan türetildi**, ölçülmüş değil. |
 | DryDECK nozul çapları | "2 Different Nozzle Type" deniyor, **çap verilmiyor** |

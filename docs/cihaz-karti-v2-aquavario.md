@@ -19,7 +19,7 @@ Etiketler: ✅ katalogdan doğrulandı · 🔬 bağımsız sektör kaynağı · 
 
 Karar gereği kaynak Salih'in çekimine bağlı DEĞİL. İki bacak:
 
-**A) Aquatronic üretici kataloğu** — TECHNICAL DETAILS tabloları + yükseklik
+**A) üretici kataloğu** — TECHNICAL DETAILS tabloları + yükseklik
 grafiği (12/14/16 mm eğrileri, 0-4.5 m ekseni) + gövde metni. Metin katmanından
 birebir okundu, aşağıdaki §1 tablosu.
 
@@ -55,7 +55,7 @@ kullandığı türetilmiş parametreler `studio/data/katalog.js` içindedir.
 
 ## 2. Çapraz doğrulama — künye sayıları fizikle TUTUYOR
 
-Bu kartın en güçlü tarafı: Aquatronic'in yayınladığı sayılar üç bağımsız yolla sağlandı.
+Bu kartın en güçlü tarafı: üreticinin yayınladığı sayılar üç bağımsız yolla sağlandı.
 
 **① Basınç ↔ yükseklik.** 0.5 bar = 5.10 m su sütunu. Nozul kaybı katsayısı 0.78
 (Safe-Rain ölçümü) → görülebilir maks yükseklik `5.10 × 0.78 = 3.98 m`... 241'in
@@ -63,7 +63,7 @@ Bu kartın en güçlü tarafı: Aquatronic'in yayınladığı sayılar üç bağ
 4.59 m) çalışıyor. **Mertebe tutuyor.**
 
 **② Güç ↔ yükseklik, rakiple.** OASE 24V/DMX ailesi: 120 W → 3.1 m, 240 W → 4.8 m.
-Aquatronic: 150 W → 3.0 m, 240 W → 4.5 m. **Aynı sınıf, %6 içinde.** İki bağımsız
+üretici: 150 W → 3.0 m, 240 W → 4.5 m. **Aynı sınıf, %6 içinde.** İki bağımsız
 üreticinin uyuşması, künyedeki yükseklikleri pazarlama abartısı olmaktan çıkarıyor.
 
 **③ Hidrolik verim.** Ø12 nozulda `Q = 0.2087·144·√h`:
@@ -71,7 +71,7 @@ Aquatronic: 150 W → 3.0 m, 240 W → 4.5 m. **Aynı sınıf, %6 içinde.** İk
 - 241 → 63.8 l/dk @ 4.5 m → P_hidrolik = 60.1 W ÷ 240 W = **%25**
 
 İkisi de aynı mertebede — künye kendi içinde tutarlı. (24 V BLDC dalgıç için
-%20-45 bandı normal; OASE 240 W için %43 çıkıyor, Aquatronic biraz daha muhafazakâr.)
+%20-45 bandı normal; OASE 240 W için %43 çıkıyor, üretici biraz daha muhafazakâr.)
 
 ## 3. Su kolonu karakteri
 
@@ -228,7 +228,7 @@ görsel). Varsayılanım: yalnız Ø12 (katalogun sayı verdiği çap).
 
 Karta katmadığım, boşluk olarak duran değerler: 120 W ve 270 W modellerinin
 yükseklikleri (künyede model serisi var, sayı yok), Ø16 yükseklik eğrisi,
-DMX kanal haritası, gerçek ölçülmüş debi tablosu (Aquatronic yayınlamıyor —
+DMX kanal haritası, gerçek ölçülmüş debi tablosu (üretici yayınlamıyor —
 Safe-Rain yasasıyla türetildi).
 
 ---

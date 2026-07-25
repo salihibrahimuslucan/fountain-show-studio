@@ -1,4 +1,4 @@
-# Aquatronic Show Studio
+# Show Studio
 
 Web tabanlı çeşme şovu önizleme aracı: müşteri planı (DXF/PNG) üzerine ürün
 yerleştir, müzikten koreografi üret, şov modunda izlet, markalı webm indir.
@@ -100,7 +100,7 @@ senaryosunda aynı komutu taşınan klasörden çalıştırmak yeter.
    scrub (durakta kalır, ▶ ile sürer). Kanallar yerleştirilen cihazlardan doğar.
 6. **TAB → Şov modu** — sinematik kamera kendiliğinden akar; fareyle serbest
    orbit, bırakınca geri döner. UI oynarken 4 sn'de gizlenir.
-7. **🔴 kayıt** — şov baştan döngüsüz bir tur döner, `aquatronic-show.webm`
+7. **🔴 kayıt** — şov baştan döngüsüz bir tur döner, `show-studio.webm`
    (marka overlay + müzik) otomatik iner. Kayıt sürerken 📁 proje açma reddedilir.
 8. **💾 / 📁** — `.aqshow` (tek JSON) indir/aç. DXF metni ve kalibrasyonu dosyaya
    gömülür; **PNG zemin gömülmez** (kayıtta uyarı verilir), müzik de gömülmez —
@@ -111,7 +111,7 @@ senaryosunda aynı komutu taşınan klasörden çalıştırmak yeter.
 ## Yayın + offline paket
 
 - **Build:** `bash tools/build.sh` → `dist/` (yalnız studio içeriği; ders/docs girmez).
-- **Cloudflare Pages:** `npx wrangler pages deploy dist --project-name=aquatronic-show-studio --branch=main`
+- **Cloudflare Pages:** `npx wrangler pages deploy dist --project-name=show-studio --branch=main`
   (`--branch=main` ŞART — aksi halde preview URL'e gider; ilk seferde `npx wrangler login`).
 - **Offline/USB:** `dist/` içeriğini kopyala, YANINA `tools/baslat.cmd`'yi koy —
   çift tık sunucuyu 8321'de açar ve tarayıcıyı başlatır (Python kurulu olmalı).

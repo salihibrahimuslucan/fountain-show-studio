@@ -76,7 +76,7 @@ import { GPUComputationRenderer } from 'three/addons/misc/GPUComputationRenderer
 //   TARAYICI ZATEN KODEK'E SAHİP. MediaRecorder + canvas.captureStream ile
 //   sahneyi (ve müziği) gerçek-zamanlı yakalayıp webm'e yazarız — ffmpeg/
 //   sunucu YOK, nakit 0. Markalı overlay için WebGL karesini bir 2D "kayıt
-//   tuvaline" kopyalar, üstüne Aquatronic başlığını çizer, ONU kaydederiz.
+//   tuvaline" kopyalar, üstüne uygulama başlığını çizer, ONU kaydederiz.
 //
 // Yeni parçalar (BLOK 14):
 //   • MediaStream birleştirme: video = kayıt tuvali stream'i, ses = actx
@@ -958,7 +958,7 @@ const kayitTuval = document.createElement('canvas');   // WebGL karesi + marka b
 const kctx = kayitTuval.getContext('2d');
 let kaydediyor = false, recorder = null, kayitBitTimer = null;
 
-// Her kayıt karesinde: WebGL canvas'ını kopyala + Aquatronic overlay çiz.
+// Her kayıt karesinde: WebGL canvas'ını kopyala + marka overlay çiz.
 function kayitKaresiCiz() {
   const c = renderer.domElement;
   if (kayitTuval.width !== c.width || kayitTuval.height !== c.height) {
@@ -971,7 +971,7 @@ function kayitKaresiCiz() {
   kctx.font = `600 ${s}px Consolas, monospace`;
   kctx.textBaseline = 'top';
   kctx.fillStyle = 'rgba(255,255,255,0.9)';
-  kctx.fillText('AQUATRONIC', s, s);
+  kctx.fillText('SHOW STUDIO', s, s);
   kctx.font = `${Math.round(s * 0.7)}px Consolas, monospace`;
   kctx.fillStyle = 'rgba(143,211,255,0.75)';
   kctx.fillText('Show Studio — çeşme şovu önizlemesi', s, s * 2.1);
@@ -1000,7 +1000,7 @@ function kayitBaslat() {
     const blob = new Blob(chunks, { type: 'video/webm' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = 'aquatronic-show.webm';
+    a.href = url; a.download = 'show-studio.webm';
     a.click();                                          // kullanıcının kendi tıkının sonucu = indir
     setTimeout(() => URL.revokeObjectURL(url), 4000);
     mesajGoster(`video hazır (${(blob.size / 1e6).toFixed(1)} MB) — indiriliyor`);

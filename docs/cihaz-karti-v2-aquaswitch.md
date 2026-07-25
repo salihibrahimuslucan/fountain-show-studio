@@ -45,8 +45,8 @@ gözlem satır 74-75):
 | Kare | Kaynak | Ne öğretiyor |
 |---|---|---|
 | `kare/switch-hedef-1.jpg` | Bellagio t=25 | tüm hat aynı anda tam açık; ince, ayrık, keskin dikey sütunlar; staccato "açık faz" netliği; taban ışık şeridi |
-| `kare/switch-hedef-2-gercek.jpg` | Aquatronic [GERÇEK], switch test.mp4 t=16 | tam açık faz: üç ince beyaz kolon, köpüklü uç topuzu; **kesme sonrası kolon havada BÜTÜN halinde kopuyor** (üst kütle düşerken taban temiz) — motor için aç-kapa zamanlama referansı |
-| `kare/switch-hedef-3-gercek.jpg` | Aquatronic [GERÇEK], drydeck switch2.mp4 t=27 | gece/ışıklı keskin jet: LED halkalı nozuldan tek ince mavi kolon, tabanda mist havuzu; jet gövdesi boncuk boncuk damla dizisine ayrışıyor (laminer değil, darbeli) |
+| `kare/switch-hedef-2-gercek.jpg` | üretici görseli [GERÇEK], switch test.mp4 t=16 | tam açık faz: üç ince beyaz kolon, köpüklü uç topuzu; **kesme sonrası kolon havada BÜTÜN halinde kopuyor** (üst kütle düşerken taban temiz) — motor için aç-kapa zamanlama referansı |
+| `kare/switch-hedef-3-gercek.jpg` | üretici görseli [GERÇEK], drydeck switch2.mp4 t=27 | gece/ışıklı keskin jet: LED halkalı nozuldan tek ince mavi kolon, tabanda mist havuzu; jet gövdesi boncuk boncuk damla dizisine ayrışıyor (laminer değil, darbeli) |
 
 VARIO'dan FARKI: VARIO'nun problemi malzeme/görünüm (yarı saydam → köpüklü
 beyaz) idi. **SWITCH'in problemi zamanlama/davranış** — kesme anının kendisi
@@ -60,7 +60,7 @@ koruyarak uçmaya devam ediyor), artı aynı köpük/topuz malzeme dersi.
 | #11 | Köpüklü jet dokusu (VARIO'da yapıldı, SWITCH'e uygulanacak) | switch-hedef-2/3 köpüklü/boncuklu kolon | ✔ VARIO turu (kod var, SWITCH'e bağlanacak) |
 | #12 | Tepe topuzu (VARIO'da yapıldı, SWITCH'e uygulanacak) | switch-hedef-1/2 tepe topuzu | ✔ VARIO turu (kod var, SWITCH'e bağlanacak) |
 | #10 | İçeriden aydınlanma (ters fresnel) | switch-hedef-3 LED halkalı içten ışıklı kolon | kontrol edilecek (henüz yapılmadı, SWITCH adayı) |
-| #37 | Solenoid tepki süresi ~20 ms (Fontana POP Jet, ✅kaynaklı ama Aquatronic'in kendi ürünü değil) | aç/kapa gecikmesi | boşta — [TÜRETİM] uyarısıyla kullanılabilir |
+| #37 | Solenoid tepki süresi ~20 ms (Fontana POP Jet, ✅kaynaklı ama üreticinin kendi ürünü değil) | aç/kapa gecikmesi | boşta — [TÜRETİM] uyarısıyla kullanılabilir |
 | #38 | Kesilen kolonun havada bütün kütle halinde kalması | switch-hedef-2 "kolon havada bütün halinde kopuyor" | **kaynak YOK** — [TÜRETİM] tasarım UYGULANDI (2026-07-22 KOD adımı, `motor.js` `aniKesme`/`uKapali`); GÖRSEL KAPI [ELLE] bekliyor, bkz. §"KOD adımı sonuçları" |
 
 ⚠ #38 bu kartın en zor maddesi: mevcut jet sistemi muhtemelen anlık
