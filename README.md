@@ -1,5 +1,7 @@
 # Show Studio
 
+### ▶ [Live demo](https://salihibrahimuslucan.github.io/fountain-show-studio/)
+
 Browser-based **preview engine for musical fountain shows**. Load a site plan, place real
 fountain hardware on it, choreograph the show against music, play it back in 3D, and export
 a branded video for the customer — all in a static web page, no install, no GPU workstation.
