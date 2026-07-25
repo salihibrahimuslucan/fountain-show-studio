@@ -1,0 +1,596 @@
+/* Show Studio — kabuk (iki mod: sov / editor)
+   ============================================================
+   UI KİMLİK TURU (2026-07-19, dal `ui-kimlik`)
+   Tek otorite: docs/2026-07-19-ui-kimlik.md — renk uydurma, oradan al.
+
+   NEYDİ: neon-on-navy palet (#8fd3ff cyan · #050810 lacivert) + baştan sona
+   Consolas. ÜÇ SOMUT ARIZA:
+     1) Arayüz sahneyle AYNI renk ailesindeydi (şov da mavi-cyan gece çeşmesi)
+        → kontrol yüzeyi ile içerik arasındaki sınır kayboluyordu.
+     2) Vurgu her yerdeydi → "önemli" demeyi bırakmıştı.
+     3) Her şey monospace → "terminal teması" klişesi, başlık/butonda okunurluk
+        düşük.
+   NEDEN BÖYLE DÜZELTİLDİ: yüzeyler NÖTR GRİ (şovun mavisinden ayrışsın), tek
+   vurgu KEHRİBAR (sahnenin karşıtı; göz onu asla şov içeriğiyle karıştırmaz;
+   önceki kimliğin ikincil rengi, neonluğu kısılmış), gövde yazısı sistem
+   sans — monospace YALNIZ hizalanan/kayan sayıda.
+   ============================================================ */
+
+:root {
+  /* yüzey / çizgi / metin */
+  --zemin:   #15171a;   /* uygulama zemini, plan tuvali zemini */
+  --yuzey:   #1b1e22;   /* panel · üst bar · şerit */
+  --yuzey-2: #23272c;   /* buton · select · çip */
+  --yuzey-3: #2d3238;   /* hover */
+  --cizgi:   #31363d;   /* ayrım çizgisi, buton kenarı */
+  --cizgi-2: #434a53;   /* vurgulu kenar */
+  --metin:   #d7dade;   /* birincil */
+  --metin-2: #949aa2;   /* etiket, ikincil */
+  --metin-3: #6d747c;   /* sessiz, ipucu, boş durum */
+  /* vurgu: TEK renk — seçili durum + birincil eylem + playhead */
+  --vurgu:       #d98e33;
+  --vurgu-2:     #f0a94a;
+  --vurgu-zayif: rgba(217, 142, 51, .14);
+  --tehlike:     #c2453d;   /* kayıt aktif */
+
+  /* webfont İNDİRİLMEZ, CDN yok → file:// altında da çözülür */
+  --yazi: system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --yazi-sayi: "Cascadia Mono", Consolas, ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--zemin);
+  color: var(--metin);
+  font-family: var(--yazi);
+  font-size: 13px;
+  line-height: 1.25;               /* yoğunluk: profesyonel araç, boş satır lüksü yok */
+}
+
+/* Monospace ADASI — kayan sayı / hizalanan sütun. Geri kalan her şey düz metin. */
+#saat, #zoom-bilgi, #proje-ad, .sayi {
+  font-family: var(--yazi-sayi);
+  font-variant-numeric: tabular-nums;   /* rakam genişliği sabit → sayı zıplamaz */
+}
+
+/* renderer.domElement — body'nin ilk çocuğu olan canvas: tam ekran arka katman */
+body > canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+}
+
+/* --- ortak buton / dosya-etiketi görünümü ---
+   inline-flex: ikon+metin taşıyan düğmelerde SVG'nin taban çizgisine oturmama
+   sorunu (emojinin eski derdi) hiç doğmasın diye. min-height 22px: yoğunluk
+   arttı ama tıklama hedefi bunun altına DÜŞMEMELİ. */
+button,
+label.dosya {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+  background: var(--yuzey-2);
+  color: var(--metin);
+  border: 1px solid var(--cizgi);
+  border-radius: 3px;
+  padding: 2px 8px;
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+/* ⚠[hidden] REGRESYONU (ui-kimlik turu, karede yakalandı): `[hidden]{display:none}`
+   TARAYICININ UA stil sayfasından gelir; yukarıdaki `button{display:inline-flex}`
+   YAZAR kuralı ise UA'yı her zaman ezer → `<button id="cihaz-sil" hidden>` hiç
+   cihaz seçili değilken bile ekranda duruyordu (ana.js onu `.hidden = true/false`
+   ile yönetiyor, yani JS doğru çalışıyordu, gizleme kuralı yoktu).
+   Bu, dosyada zaten belgeli `#webgl-uyari:not([hidden])` tuzağının İKİZİ: orada
+   #id özgüllüğü UA'yı eziyordu, burada eleman kuralı. NEDEN BÖYLE: display atayan
+   HER yazar kuralından sonra `[hidden]`'ı yazar seviyesinde geri koyuyoruz;
+   !important şart, çünkü sonraki `.birincil`/`.cip` gibi kurallar da display'e
+   dokunabilir. #webgl-uyari'nin seçicisi `:not([hidden])` olduğu için bu kuralla
+   ÇAKIŞMAZ — banner gizliyken zaten display almıyor, görünürken [hidden] yok. */
+[hidden] { display: none !important; }
+
+button:hover,
+label.dosya:hover { background: var(--yuzey-3); border-color: var(--cizgi-2); }
+button:disabled { opacity: .45; cursor: default; }
+button svg, label.dosya svg { flex: 0 0 auto; }
+
+/* klavye odağı görünür kalsın (nötr yüzeyde kenar tek başına yetmiyor) */
+button:focus-visible,
+label.dosya:focus-visible,
+select:focus-visible { outline: 1px solid var(--vurgu); outline-offset: 1px; }
+
+/* HİYERARŞİ — üç seviye. Eskiden her düğme aynı görünüyordu, ana eylem
+   (kaydet/bestele) ile yardımcı (× kaldır) ayırt edilemiyordu. */
+.birincil {                                   /* ana eylem */
+  background: var(--vurgu-zayif);
+  border-color: var(--vurgu);
+  color: var(--vurgu-2);
+}
+.birincil:hover { background: rgba(217, 142, 51, .22); border-color: var(--vurgu-2); }
+.sessiz {                                     /* düşük kontrastlı yardımcı */
+  background: transparent;
+  border-color: transparent;
+  color: var(--metin-3);
+}
+.sessiz:hover { background: var(--yuzey-2); border-color: var(--cizgi); color: var(--metin-2); }
+
+/* aktif durum — TEK vurgu rengiyle işaretlenir (button.aktif: ana.js kancası) */
+button.aktif {
+  background: var(--vurgu-zayif);
+  color: var(--vurgu-2);
+  border-color: var(--vurgu);
+}
+
+/* E3: tüm açılır menüler ustbar butonlarıyla aynı görsel dil */
+/* ⚠ÜST BAR 1280'DE KIRPIYORDU: beş <select> (örnek şov / şablon / fon / örnek
+   parça / desen) kapalı haldeyken EN UZUN seçeneğinin genişliğine göre yer
+   ayırıyordu — "fade (gün batımı)" gibi bir seçenek hiç seçilmese bile bar
+   ~200px şişiyordu. NEDEN BÖYLE: max-width + ellipsis. Kapalı kutu daralır,
+   AÇILIR LİSTE tam metni gösterdiği için bilgi kaybı YOK; seçim yapıldıktan
+   sonra da etiket bağlamdan (küme ayracı) okunuyor. */
+select {
+  background: var(--yuzey-2);
+  color: var(--metin);
+  border: 1px solid var(--cizgi);
+  border-radius: 3px;
+  padding: 2px 4px;
+  font: inherit;
+  cursor: pointer;
+  max-width: 86px;          /* ölçülerek bulundu: 104px'te 1280 barı 77px taşıyordu */
+  text-overflow: ellipsis;
+}
+select:hover { background: var(--yuzey-3); border-color: var(--cizgi-2); }
+button { transition: background 0.12s, border-color 0.12s; }
+
+/* WebGL2 yok uyarısı — :not([hidden]) ŞART: #id özgüllüğü UA [hidden]{display:none}
+   kuralını ezer; bu olmadan banner hep görünür kalır */
+#webgl-uyari:not([hidden]) {
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  text-align: center;
+  background: var(--zemin);
+  color: var(--vurgu-2);
+  font-size: 15px;
+}
+
+/* ============================================================
+   ŞOV MODU — saydam tam-ekran katman; sadece çocuklar tıklanır
+   (böylece boş alana sürükleyince sahne orbit olur)
+   ============================================================ */
+#sov-ui {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* oto-gizleme (Task 7, ana.js pointermove kancası ekler/kaldırır):
+   hareketsizlikte saydamlaşır, dokununca hemen geri döner */
+#sov-ui.gizli {
+  opacity: 0;
+  transition: opacity 0.6s;
+}
+
+/* gizliyken görünmez transport sürükleme/tıklama da yutmasın. Kap (#sov-ui)
+   zaten pointer-events:none; olayı yiyen, transport'un kendi auto'su —
+   gizli'de onu kapat (çocuklar inherit ile kapanır) */
+#sov-ui.gizli #sov-transport, #sov-ui.gizli #sov-cetvel { pointer-events: none; }
+
+/* Marka kilidi. NEYDİ: monospace + orta nokta ayracı + cyan + parlak gölge —
+   filigran değil ikinci bir arayüz öğesi gibi bağırıyordu ve şovun mavisiyle
+   aynı aileydi. NEDEN: sakin, düşük kontrastlı, harf aralığı açık sans; gölge
+   yalnız OKUNURLUK için (aydınlık çeşme karesi üstünde kaybolmasın), parlaklık
+   için değil. */
+#logo {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  color: var(--metin-2);
+  opacity: .62;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 2.5px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .8);
+}
+
+/* yüzen transport: alt-orta */
+/* T-A ince cetvel: transport'un hemen üstünde, geniş scrub çubuğu.
+   #sov-ui pointer-events:none olduğundan auto burada AÇILIR; gizli'de
+   transport'la aynı kuralla kapanır (aşağıdaki .gizli bloğu).
+   NEYDİ: cyan dolgu — şovun kendi rengiyle karışıyordu. NEDEN: dolgu artık
+   kehribar, oluk nötr; playhead ile aynı dil (bkz. plan/şerit tuvalleri). */
+#sov-cetvel {
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  bottom: 60px;
+  height: 4px;
+  background: rgba(255, 255, 255, .10);
+  border-radius: 2px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+#sov-cetvel-dolu { height: 100%; width: 0; background: var(--vurgu); border-radius: 2px; }
+
+/* NEYDİ: 16px yuvarlaklık + mavi parıltılı lacivert cam — "tüketici medya
+   oynatıcı" dili. NEDEN: 6px köşe + nötr yüzey + ince kenar → kontrol paneli
+   dili; gölge sahneden ayırmak için minimum düzeyde kaldı. */
+#sov-transport {
+  position: absolute;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(27, 30, 34, 0.92);
+  border: 1px solid var(--cizgi);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+}
+/* DURUMLU İKONLAR (#oynat · #kayit) — eski "Segoe UI Symbol" yaması KALKTI.
+   NEYDİ: ana.js/kayit.js düğmelerin textContent'ini yazıyordu (`▶`/`⏸`, `🔴`/`⏹`),
+   bu da içerideki inline SVG'yi ilk tıklamada SİLİYORDU; çare olarak yazı yığınına
+   "Segoe UI Symbol" öne alınıp glifler tek renk metne zorlanmıştı — platforma
+   bağımlı ve taban çizgisine oturmayan bir yama.
+   ŞİMDİ: her iki ikon da HTML'de durur, JS yalnız `data-durum` yazar, seçimi
+   burası yapar. Kazanç: ikon platformdan bağımsız, currentColor'ı miras alır
+   (hover/disabled bedava doğru), JS'in DOM'u yeniden kurması gerekmez.
+   ⚠KURAL: bu düğmelere bir daha textContent YAZILMAZ. */
+#oynat .ik-oynat, #oynat .ik-duraklat,
+#kayit .ik-kayit, #kayit .ik-dur { display: none; }
+#oynat[data-durum="oynuyor"]      .ik-duraklat { display: block; }
+#oynat[data-durum="duraklatildi"] .ik-oynat    { display: block; }
+#kayit[data-durum="bekliyor"]     .ik-kayit    { display: block; }
+#kayit[data-durum="kaydediyor"]   .ik-dur      { display: block; }
+#oynat { min-width: 38px; justify-content: center; }
+#saat { color: var(--metin-2); min-width: 92px; text-align: center; }
+/* kayıt düğmesi (T14): bekleme NÖTR (kırmızı nokta ikonu yeter — kırmızı zemin
+   "hata" gibi okunuyordu), yalnız KAYITTA kızarır → durum tek bakışta belli. */
+#kayit {
+  background: transparent;
+  border-color: var(--cizgi);
+  color: var(--metin-2);
+}
+#kayit:hover { background: var(--yuzey-2); color: var(--metin); }
+#kayit.kaydediyor {
+  background: var(--tehlike);
+  border-color: var(--tehlike);
+  color: #fff;
+}
+#mod-ipucu { color: var(--metin-3); font-size: 11px; }
+
+/* Ses sözleşmesi rozeti (2026-07-23): şov müziksiz açıldığında SÜREKLİ görünür.
+   Geçici mesaj yeterli değildi — kullanıcı sessizliği ürünün hatası sanıyordu.
+   UYARI tonu (tehlike değil): eksik bir şey var ama bozuk değil. */
+#muzik-durum {
+  color: var(--uyari, #e0a44a);
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 11px;
+  white-space: nowrap;
+  opacity: 0.9;
+}
+#muzik-durum[hidden] { display: none; }
+
+/* ============================================================
+   EDİTÖR MODU — tam ekran ızgara
+   ============================================================ */
+#editor-ui {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-rows: 34px minmax(0, 1fr) auto;   /* E3: alt satır #serit-kap yüksekliğinden
+                                                     (38→34px: yoğunluk turu) */
+  /* SAHNE görünümünde (plan tuvali gizli) orta boşluk 3D orbite düşsün diye
+     kap olayları yutmaz; gerçek UI parçaları aşağıda tek tek geri açılır
+     (#sov-ui'deki pointer-events desenin editör hali, Task 9) */
+  pointer-events: none;
+}
+#ustbar, #palet, #panel, #plan-tuval, #serit-tuval, #serit-bar { pointer-events: auto; }
+/* ⚠IZGARA TAŞMASI (gerçek tarayıcı turu 2026-07-18): ızgara/flex çocuklarının
+   varsayılan min-width'i AUTO'dur → içindeki canvas'ın bitmap genişliği
+   "intrinsic" sayılıp sütunu pencereden GENİŞ yapıyordu (1048'lik pencerede
+   #serit-kap 1708px ölçüldü; body overflow:hidden olduğu için şeritlerin sağ
+   ~660px'i hiç görünmüyor, ulaşılamıyordu). min-height:0 dersinin (Ders 8)
+   YATAY ikizi — tuvalli her kapta İKİ eksene de yazılmalı. */
+#editor-ui > * { min-width: 0; }
+#plan-tuval, #serit-tuval { max-width: 100%; }
+
+/* ⚠ÜST BAR TAŞMASI (ÖNCE karesi, 2026-07-19): #ustbar flex idi, wrap yoktu ve
+   hiçbir çocuğa küçülme/kaydırma kuralı verilmemişti. 1280px'de müzik kümesinin
+   son düğmesi (#dongu) sağ kenarda KIRPILIYOR, #proje-ad hiç görünmüyordu; body
+   overflow:hidden olduğu için taşan parçaya ULAŞILAMIYORDU — yani döngü düğmesi
+   fiilen yok. Izgara taşması dersinin (min-width:0, aşağıda) üst bardaki
+   akrabası: taşma tek başına kötü değil, ERİŞİLEMEZ taşma kötü.
+   NEDEN BÖYLE: (1) min-width:0 → flex çocukları gerçekten küçülebilsin,
+   (2) #proje-ad daralıp ellipsis'e düşsün (bilgi kaybı yok, id/yeri korunuyor),
+   (3) kalan taşma overflow-x:auto ile KAYDIRILABİLİR olsun — 4px'lik ince
+   çubuk 34px'lik barı yemiyor. 1024px'de de her düğme erişilebilir. */
+#ustbar {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  background: var(--yuzey);
+  border-bottom: 1px solid var(--cizgi);
+}
+#ustbar::-webkit-scrollbar { height: 5px; }
+#ustbar::-webkit-scrollbar-thumb { background: var(--metin-3); border-radius: 3px; }
+#ustbar::-webkit-scrollbar-track { background: transparent; }
+/* esnek boşluk: dar pencerede İLK 0'a çöker (kümeler kırpılmadan önce o gider) */
+#ustbar .ayr { flex: 1 1 0; min-width: 0; }
+#ustbar > button, #ustbar > .kume, #ustbar > label { flex: 0 0 auto; }
+/* E3: mantıksal buton kümeleri — dosya | sahne | müzik-beste.
+   NEYDİ: neredeyse görünmez lacivert kutular; üç küme tek bir uzun düğme
+   şeridi gibi okunuyordu. NEDEN: kutu yerine kümeler arası İNCE DİKEY AYRAÇ
+   (::before) — CAD/DMX araçlarının araç-çubuğu dili; dikey gürültü eklemeden
+   gruplama okunuyor ve 34px'lik barda yer yemiyor. */
+.kume {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 5px;
+  position: relative;
+}
+.kume::before {
+  content: '';
+  position: absolute;
+  left: -3px;
+  top: 5px;
+  bottom: 5px;
+  width: 1px;
+  background: var(--cizgi);
+}
+/* daralabilir ama SIFIRA DEĞİL: ölçümde (1024px) flex:0 1 auto ile genişliği
+   0'a çöküp tamamen kayboluyordu — "daralt" çözümü, düzeltmek istediğimiz
+   "görünmez proje adı" hatasını aynen üretiyordu. min-width ile en az birkaç
+   karakter + "…" hep durur; gerisi üst barın yatay kaydırmasına bırakıldı. */
+#proje-ad {
+  color: var(--metin-3);
+  font-size: 11px;
+  flex: 0 1 auto;
+  min-width: 9ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* orta satır: palet | plan tuvali | panel */
+#orta {
+  display: grid;
+  grid-template-columns: 148px 1fr 150px;   /* v5: künye adları (VARIO DryDECK) sığsın */
+  min-height: 0;
+}
+/* ⚠BOŞ PANELİ DARALTMA DENENDİ ve GERİ ALINDI (2026-07-19). Fikir: seçim yokken
+   sağ sütunu 150→28px'e indirip yeri plana vermek. Kulağa temiz geliyor, pratikte
+   YERLEŞİM SIÇRAMASI üretiyor: cihaz seçilince panel açılır → plan tuvali daralır
+   → tuvaldeki HER cihazın ekran konumu kayar. Yani tam kullanıcının bir cihazı
+   tutmaya çalıştığı anda hedef parmağının altından kaçıyor. Etkileşim koşucusu
+   bunu iki adımda yakaladı (sürükleme ve Delete: cihaz artık tıklanan yerde
+   değildi). DERS: etkileşim sırasında tetiklenen yerleşim değişimi, kazandığı
+   150px'ten pahalıdır — sabit sütun KASITLI. Değişmesi gerekirse doğru yol panel
+   sütununu daraltmak değil, paneli plan üstüne YÜZEN katman yapmak (tuval hiç
+   ölçü değiştirmez). */
+
+#palet,
+#panel {
+  min-height: 0;
+  overflow: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;                                 /* yoğunluk: 6→3px */
+  background: var(--yuzey);
+}
+#palet { border-right: 1px solid var(--cizgi); }
+#panel { border-left: 1px solid var(--cizgi); }
+/* v7 G8: palet alt kenarda son ürünü ORTADAN kesiyordu, "arıza" gibi duruyordu.
+   Sticky sönüm şeridi + alt boşluk: kesik satır artık "aşağıda devamı var"
+   diye okunuyor ve son öğe sonuna kadar kaydırılabiliyor.
+   (Gradyan yeni yüzey tonuna hizalandı — eski lacivert kalsaydı bant görünürdü.) */
+#palet { padding-bottom: 18px; }
+#palet::after {
+  content: '';
+  position: sticky;
+  bottom: -6px;
+  height: 20px;
+  margin-top: -20px;
+  flex: 0 0 auto;
+  pointer-events: none;
+  background: linear-gradient(rgba(27, 30, 34, 0), rgba(27, 30, 34, 0.96));
+}
+
+/* NEYDİ: başlıklar kehribar sarıydı → vurgu rengi "önemli" demeyi bırakmıştı
+   (her sütun başlığında vardı). NEDEN: başlık artık sessiz gri versal; kehribar
+   yalnız SEÇİLİ/BİRİNCİL durumlara ayrıldı. */
+.baslik {
+  color: var(--metin-3);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+.urun { text-align: left; justify-content: flex-start; }
+/* boş durum / seçili cihaz yokken (ana.js '—' yazar) — nötr, sessiz */
+#panel-icerik { color: var(--metin-3); font-size: 12px; line-height: 1.4; }
+
+/* İŞ3 tık.2: seçili cihazın playhead'deki rengi — küçük renk karesi + rgb yazısı */
+#panel-renk { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+#panel-swatch {
+  width: 22px; height: 22px; border-radius: 4px;
+  border: 1px solid var(--cizgi-2);
+  background: #444;                          /* ana.js playhead rengiyle ezer */
+  flex: 0 0 auto;
+}
+#panel-renk-yazi { color: var(--metin-3); font-size: 11px; }
+/* İŞ3 tık.3: cihaz güç düğmesi (master aç/kapa) — durum data-durum ile renklenir */
+#cihaz-guc {
+  margin-top: 4px;
+  align-self: flex-start;
+  font-size: 12px;
+  padding: 3px 10px;
+}
+#cihaz-guc[data-durum="acik"] { color: var(--vurgu-2); border-color: var(--vurgu); background: var(--vurgu-zayif); }
+#cihaz-guc[data-durum="kapali"] { color: var(--metin-2); }
+#cihaz-guc-nokta { font-size: 10px; vertical-align: middle; }
+/* master çipi ipucu: "açık/kapalı" küçük gri alt-etiket */
+.cip-ipucu { font-size: 9px; color: var(--metin-3); }
+.cip.aktif .cip-ipucu { color: var(--vurgu-2); }
+
+/* F1 Task 9b: gruplandır düğmesi + grup paneli — SÜTUN GENİŞLİĞİ SABİT (150px,
+   #orta grid-template-columns), burada büyütülmez/daraltılmaz. #panel zaten
+   overflow:auto — form dar sütuna oturur, taşarsa dikey kaydırır.
+   ⚠GERÇEK TARAYICI BULGUSU (2026-07-20): bu blok ilk hâlinde sütunu PATLATIYORDU —
+   grup paneli görünür olur olmaz #panel 150px yerine 1238px ölçülüyor, plan tuvali
+   sıfıra iniyordu. Kök sebep MIN-CONTENT: `width:100%` bir select'in min-content
+   katkısını kapatmaz ve `max-width:none` genel `select{max-width:86px}` frenini de
+   kaldırınca en uzun seçenek ("karşılıklı"/"ambiyans") yukarı doğru itiyor; ızgara
+   çocuğu #panel'in varsayılan `min-width:auto`'su da onu track'ini aşacak kadar
+   büyütüyor. Bu, deponun `min-height:0` dersinin YATAY İKİZİ (2026-07-18 denetimi,
+   editör ızgarası pencereden taşıyordu) — aynı tuzak, ikinci kez. */
+#panel { min-width: 0; }                    /* track'i aşmasın — min-width:auto freni */
+#grupla { margin-top: 4px; align-self: flex-start; font-size: 12px; padding: 3px 10px; }
+#grup-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--cizgi);
+}
+#grup-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .6px;
+  text-transform: uppercase;
+  color: var(--metin-3);
+}
+/* input/select: aynı katalog dili (bkz. `select` kuralı) — dar sütunda tam genişlik,
+   select'in genel max-width:86px'i burada iptal (sütun zaten 150px'i geçmiyor). */
+#grup-panel input[type="text"],
+#grup-panel select {
+  background: var(--yuzey-2);
+  color: var(--metin);
+  border: 1px solid var(--cizgi);
+  border-radius: 3px;
+  padding: 2px 4px;
+  font: inherit;
+  width: 100%;
+  max-width: none;
+  min-width: 0;                             /* select'in min-content'i sütunu itmesin */
+  box-sizing: border-box;
+}
+#grup-panel input[type="range"] { width: 100%; min-width: 0; accent-color: var(--vurgu); }
+#grup-panel #desen-uygula { align-self: flex-start; font-size: 12px; padding: 3px 10px; }
+
+/* tuvaller: min-height:0 ŞART (Ders 8) — yoksa canvas bitmap boyutuna şişer */
+#plan-tuval,
+#serit-tuval {
+  min-height: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+#serit-tuval {
+  background: var(--yuzey);
+}
+
+/* E2: şerit kabı — filtre çipi barı + tuval (dikey flex; tuval kalan alanı alır) */
+#serit-kap {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 240px;                      /* E3: ayraç sürüklemesi inline ezer */
+  pointer-events: none;               /* çocuklar tek tek açar (editör deseni) */
+  border-top: 1px solid var(--cizgi);
+}
+/* E3: şerit yükseklik ayracı */
+#serit-ayrac {
+  height: 5px;
+  cursor: ns-resize;
+  background: var(--yuzey-2);
+  pointer-events: auto;
+}
+#serit-ayrac:hover { background: var(--vurgu); }
+#serit-kap > #serit-tuval { height: auto; flex: 1 1 0; min-height: 0; }
+#serit-bar {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  padding: 2px 6px;
+  background: var(--yuzey);
+  border-bottom: 1px solid var(--cizgi);
+}
+#serit-bar .baslik { margin-bottom: 0; }
+.cip {
+  min-height: 18px;                   /* çip filtre şeridi — tıklama hedefi bar yüksekliğince */
+  padding: 1px 8px;
+  font-size: 11px;
+  border-radius: 9px;
+  color: var(--metin-2);
+}
+.cip.aktif { background: var(--vurgu-zayif); color: var(--vurgu-2); border-color: var(--vurgu); }
+#zoom-bilgi { margin-left: auto; color: var(--metin-3); font-size: 11px; }
+
+/* ============================================================
+   mod görünürlüğü — hidden attribute'una ek güvence
+   ============================================================ */
+.mod-sov #editor-ui,
+.mod-editor #sov-ui { display: none; }
+
+/* ============================================================
+   mesaj balonu (Ders 10) — üst-orta sabit, opacity geçişli
+   ============================================================ */
+/* v7 G1: sağ-ALT idi — şov modunda müzik/kayıt düğmelerinin, editörde sağ alt
+   şerit anahtarlarının ÜSTÜNE biniyordu (gerçek tarayıcı bulgusu). Üst-orta
+   boş: şov modunda hiçbir şey yok, editörde üst bar 34px, marka filigranı ise
+   sağ üstte — çakışma kalmadı.
+   NEYDİ: yeşil-mint balon — palette olmayan DÖRDÜNCÜ bir renk, "başarı" demek
+   istemeden başarı sinyali veriyordu (mesajların çoğu nötr bilgi/uyarı).
+   NEDEN: nötr yüzey + kehribar kenar → "sistem konuşuyor" der, sonuç bildirmez. */
+#mesaj {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  top: 42px;
+  max-width: 70vw;
+  text-align: center;
+  z-index: 5;
+  background: var(--yuzey-2);
+  color: var(--metin);
+  border: 1px solid var(--vurgu);
+  border-left: 3px solid var(--vurgu);
+  border-radius: 3px;
+  padding: 5px 10px;
+  font-size: 12px;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, .5);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s;
+}
