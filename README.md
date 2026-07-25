@@ -4,7 +4,7 @@
 
 [![Show Studio — a fountain show running in the browser](docs/media/poster.png)](https://salihibrahimuslucan.github.io/fountain-show-studio/)
 
-*Above: a frame from a show playing in the browser. [37-second capture](docs/media/show-studio-demo.webm) (webm, 7.7 MB) — variable-flow jets choreographed to music, per-jet colour, light pools and caustics on the water, city environment preset.*
+*Above: a frame from a show playing in the browser — variable-flow jets choreographed to music, per-jet colour, light pools and caustics on the water, city environment preset. Recorded examples are [further down](#example-recordings).*
 
 Browser-based **preview engine for musical fountain shows**. Load a site plan, place real
 fountain hardware on it, choreograph the show against music, play it back in 3D, and export
@@ -50,6 +50,22 @@ local and the whole thing is served as static files.
 - Live 3D playback with a camera rig built for presentation framing
 - Branded `.webm` export to send to the customer
 - Shows save/load as a portable JSON format (`.aqshow`)
+
+---
+
+## Example recordings
+
+Three shows captured straight out of the browser, each exercising a different device family.
+Click a thumbnail for the video.
+
+| | |
+|---|---|
+| [<img src="docs/media/vario-show.png" width="380">](docs/media/vario-show.mp4)<br>**Variable-flow jets** · 37 s · 11 MB<br>Pump-driven columns whose height tracks the music, over a lit pool. | [<img src="docs/media/jump-show.png" width="380">](docs/media/jump-show.mp4)<br>**Laminar jump jets** · 18 s · 3.8 MB<br>Glass-clear arcs thrown between nozzles, lit along the whole arc. |
+| [<img src="docs/media/drydeck-show.png" width="380">](docs/media/drydeck-show.mp4)<br>**Dry-deck plaza** · 2 min 12 s · 29 MB<br>No visible pool — jets and integrated lights set flush into paving. | |
+
+Recorded in real time from the canvas, so the capture frame rate follows whatever the render
+loop achieves; the clips are normalised to 30 fps on export. A fixed-timestep offline render
+path is the next thing on the list.
 
 ---
 

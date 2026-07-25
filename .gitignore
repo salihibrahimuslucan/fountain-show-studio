@@ -10,3 +10,4 @@ studio/ornekler/_*.aqshow
 
 # vitrin varligi (demo klibi) — genel *.webm kuralindan muaf
 !docs/media/*.webm
+!docs/media/*.mp4
