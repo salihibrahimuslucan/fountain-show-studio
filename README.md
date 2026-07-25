@@ -87,8 +87,11 @@ python -m http.server -d studio 8080
 # build the deployable bundle
 ./tools/build.sh            # → dist/
 
-# tests
-node --test test/
+# tests — 522 passing
+node --test test/*.mjs
+
+# full verification: tests + headless smoke frames + pixel gate + build
+bash tools/saglik.sh
 ```
 
 No dependencies to install. Open `studio/index.html` through a server (not `file://`, the
