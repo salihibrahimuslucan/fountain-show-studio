@@ -7,3 +7,6 @@ node_modules/
 _kiyas.local/
 referans-video/
 studio/ornekler/_*.aqshow
+
+# vitrin varligi (demo klibi) — genel *.webm kuralindan muaf
+!docs/media/*.webm

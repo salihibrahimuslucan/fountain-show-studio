@@ -2,6 +2,10 @@
 
 ### ▶ [Live demo](https://salihibrahimuslucan.github.io/fountain-show-studio/)
 
+[![Show Studio — a fountain show running in the browser](docs/media/poster.png)](https://salihibrahimuslucan.github.io/fountain-show-studio/)
+
+*Above: a frame from a show playing in the browser. [37-second capture](docs/media/show-studio-demo.webm) (webm, 7.7 MB) — variable-flow jets choreographed to music, per-jet colour, light pools and caustics on the water, city environment preset.*
+
 Browser-based **preview engine for musical fountain shows**. Load a site plan, place real
 fountain hardware on it, choreograph the show against music, play it back in 3D, and export
 a branded video for the customer — all in a static web page, no install, no GPU workstation.
