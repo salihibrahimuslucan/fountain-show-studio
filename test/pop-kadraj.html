@@ -1,0 +1,72 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>AquaPOP JET kadraj koşumu</title>
+<!--
+  v7 POP turu teşhis koşumu (air-kadraj.html deseninin ikizi).
+  AquaPOP JET'in tepe yüksekliği 0.20-0.40 m; studio'nun şov kamerası ~11 m'lik
+  bir kadraj kuruyor, yani cihaz ÜRÜN kamerasında birkaç piksel kalıyor ve
+  "top mu kolon mu" sorusu oradan CEVAPLANAMAZ. Bu sayfa ürün koduna kamera
+  hilesi eklemeden 1 m'lik bir kadraj kurar: aynı motor, aynı preset, aynı künye.
+  Kullanım: bash tools/smoke.sh "test/pop-kadraj.html#t=0.30" MUTLAK/cikti.png 9000
+  Hash: t=<saniye>  tur=<arketip>  urun=<katalog adı>
+-->
+<style>html,body{margin:0;height:100%;background:#05070d;overflow:hidden}canvas{display:block}</style>
+<script type="importmap">
+{ "imports": { "three": "../studio/vendor/three/three.module.js",
+               "three/addons/": "../studio/vendor/three/jsm/" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { motorKur } from '../studio/js/motor.js';
+import { urunBul } from '../studio/data/katalog.js';
+
+const hedefT = +((location.hash.match(/t=([\d.]+)/) || [])[1] ?? 0.30);
+const urunAd = decodeURIComponent((location.hash.match(/urun=([^&#]+)/) || [])[1] ?? 'AquaPOP JET');
+const kunye = urunBul(urunAd);
+const tur = (location.hash.match(/tur=(\w+)/) || [])[1] ?? kunye?.arketip ?? 'pop';
+
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+// 0.3 m'lik bir su topunu okuyabilmek için kamera cihaza YAKIN ve alçak.
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.3, 400);
+camera.position.set(1.15, 0.55, 1.35);
+camera.lookAt(0, 0.30, 0);
+
+const zemin = new THREE.Mesh(new THREE.CircleGeometry(3, 48),
+  new THREE.MeshBasicMaterial({ color: 0x0a1826 }));
+zemin.rotation.x = -Math.PI / 2;
+scene.add(zemin);
+// Yükseklik cetveli: 10 cm aralık. Kartın "20-40 cm" iddiası ekranda ÖLÇÜLSÜN
+// diye var (kolon mu top mu tartışması ancak cetvelle kapanır).
+for (let cm = 10; cm <= 100; cm += 10) {
+  const uzun = cm % 50 === 0;
+  const g = new THREE.BufferGeometry().setFromPoints(
+    [new THREE.Vector3(0.30, cm / 100, 0), new THREE.Vector3(uzun ? 0.55 : 0.42, cm / 100, 0)]);
+  scene.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: uzun ? 0x4c86b8 : 0x2c4c66 })));
+}
+
+const motor = motorKur(renderer, scene, camera);
+motor.cozunurlukGuncelle?.();
+const c = motor.suEkle(tur, 'p1', [0, 0], 1, kunye);
+c.setRenk(1, 1, 1);
+
+// Sabit adımla ilerlet. Salvolu cihazda master'ın 0→1 KENARI tetiktir; t=0'da
+// tek bir kenar üretip sonra açık tutuyoruz (şovun step kanalıyla aynı yol).
+const DT = 1 / 60;
+let t = 0;
+c.setMaster(0);
+function kare() {
+  requestAnimationFrame(kare);
+  if (t < hedefT) {
+    t += DT;
+    motor.adim(DT, t);
+    if (t >= DT * 1.5) c.setMaster(1);        // ilk adımdan sonra 0→1 kenarı
+  }
+  motor.derinlikOnGecisi();
+  renderer.setRenderTarget(null);
+  renderer.render(scene, camera);
+}
+kare();
+</script>

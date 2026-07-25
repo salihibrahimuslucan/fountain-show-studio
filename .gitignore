@@ -1,0 +1,9 @@
+dist/
+.wrangler/
+node_modules/
+*.mp4
+*.webm
+*.local.md
+_kiyas.local/
+referans-video/
+studio/ornekler/_*.aqshow

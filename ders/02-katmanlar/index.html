@@ -1,0 +1,730 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>Ders 2 — Katmanlar (soft particles + bloom)</title>
+<style>
+  body { margin: 0; overflow: hidden; background: #000; }
+  #info {
+    position: fixed; top: 8px; left: 8px;
+    color: #8fd3ff; font: 13px/1.5 Consolas, monospace;
+    text-shadow: 0 1px 2px #000;
+  }
+</style>
+</head>
+<body>
+<div id="info">Ders 2 — katmanlar · sol tık: döndür · teker: zoom · <span id="fps">-</span> fps</div>
+
+<!-- importmap: "three" adını CDN'deki gerçek dosyaya eşler.
+     Kurulum yok, npm yok — tarayıcı modülü doğrudan internetten çeker. -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+// ============================================================
+// DERS 2 — SU İNANDIRICILIĞI = KATMANLAMA + SOFT PARTICLES + BLOOM
+//
+// Ders 1'in jeti fizik olarak doğruydu ama "nokta bulutu" gibi duruyordu.
+// Bu derste fiziğe DOKUNMUYORUZ (aynı kapalı-form balistik, aynı respawn
+// hilesi) — sadece ÇİZİMİ üç yalanla su'ya çeviriyoruz:
+//   1) Yumuşak sprite dokular + sanat katmanları (gövde + splash + sis)
+//   2) Soft particles: parçacık zemine değdiği yerde sert çizgi yerine
+//      yumuşakça kaybolur (dersin kalbi, BLOK 4)
+//   3) Bloom: additive parlaklık ışıltı halesine dönüşür → gece çeşme ışığı
+// Yan hedef: PointsMaterial'den ShaderMaterial'e ilk geçiş. Ders 3'te
+// balistiğin kendisi shader'a taşınacak; bu ders o kapının eşiği.
+// ============================================================
+
+// ============================================================
+// BLOK 1 — SAHNE KURULUMU (Ders 1'den aynen)
+// Satır satır anlatım için ders/01-cesme/index.html'e bak; burada
+// sadece Ders 2'ye özel farklar yorumlu.
+// ============================================================
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x050810);
+scene.fog = new THREE.Fog(0x050810, 15, 45);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(7, 4, 9);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 2.5, 0);
+controls.enableDamping = true;
+
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(9, 48),
+  new THREE.MeshStandardMaterial({ color: 0x0a1622, roughness: 0.3, metalness: 0.2 })
+);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+
+scene.add(new THREE.AmbientLight(0x334455, 0.8));
+const lamp = new THREE.PointLight(0x5599ff, 60, 30);
+lamp.position.set(0, 4, 0);
+scene.add(lamp);
+
+// ============================================================
+// BLOK 2 — PROSEDÜREL SPRITE DOKULAR
+// Dışarıdan tek bir asset bile yok: dokuları tarayıcının kendi
+// canvas 2D API'siyle üretip THREE.CanvasTexture ile GPU'ya veriyoruz.
+// Öğretici nokta: Ders 1'deki damlalar KARE piksellerdi (GL_POINTS'in
+// ham hali). Su hissinin ilk yarısı, kare yerine kenarı yumuşak
+// yuvarlak bir sprite basmak — göz sert kenar gördüğü an "parçacık
+// sistemi" der, yumuşak kenar gördüğünde "sıvı" der.
+// ============================================================
+
+// Ortak üretici: 128px'lik bir canvas aç, çizim fonksiyonunu çalıştır,
+// sonucu texture yap. 128 yeterli — sprite ekranda zaten küçük,
+// büyük doku sadece bellek yakar.
+function dokuUret(ciz) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  ciz(c.getContext('2d'), 128);
+  const doku = new THREE.CanvasTexture(c);
+  // colorSpace'e DOKUNMUYORUZ (linear kalsın): bu dokular renk değil
+  // YOĞUNLUK maskesi — shader'da alfa çarpanı olarak kullanacağız.
+  return doku;
+}
+
+// damlaDoku: tek radial gradient — merkez opak beyaz, kenara doğru
+// şeffaflaşır. Jet gövdesi ve splash bu sprite ile çizilecek.
+const damlaDoku = dokuUret((ctx, S) => {
+  const g = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  g.addColorStop(0.0,  'rgba(255,255,255,1)');    // merkez: tam opak
+  g.addColorStop(0.35, 'rgba(255,255,255,0.75)'); // gövde: hâlâ dolgun
+  g.addColorStop(1.0,  'rgba(255,255,255,0)');    // kenar: tam şeffaf
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, S, S);
+});
+
+// sisDoku: 5 tane düşük-alfalı radial blob üst üste — tek gradient
+// fazla "top" gibi durur, birkaç kaymış leke bindirilince bulutsu,
+// düzensiz bir sprite çıkar. Rastgelelik her yüklemede farklı sis
+// dokusu üretir; sorun değil, sis zaten "belirsizlik" katmanı.
+const sisDoku = dokuUret((ctx, S) => {
+  for (let i = 0; i < 5; i++) {
+    // merkezleri kanvasın ortasına yakın tut ki blob kenardan taşmasın
+    // (taşarsa sprite'ın kare sınırı görünür — tam kaçındığımız şey!)
+    const x = S * (0.34 + Math.random() * 0.32);
+    const y = S * (0.34 + Math.random() * 0.32);
+    const r = S * (0.16 + Math.random() * 0.14);
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, 'rgba(255,255,255,0.16)');  // çok düşük alfa: katmanlar toplansın
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, S, S);
+  }
+});
+
+// ============================================================
+// BLOK 3 — JET GÖVDESİ: PointsMaterial → ShaderMaterial GEÇİŞİ
+// CPU balistik sim Ders 1'in AYNISI. Değişen tek şey malzeme.
+// Neden hazır PointsMaterial yetmiyor?
+//   - Soft particles (BLOK 4) fragment shader'da derinlik okumak ister,
+//   - Köpük hilesi parçacık başına hıza bakarak renk değiştirmek ister,
+//   - PointsMaterial'de ikisine de kanca yok.
+// Ayrıca Ders 3'te balistiği tamamen shader'a taşıyacağız; bu blok
+// shader dünyasına atılan ilk kontrollü adım.
+// ============================================================
+
+// ---- 3a. Ortak shader altyapısı ------------------------------
+// Üç katman (gövde/splash/sis) neredeyse aynı shader'ı kullanacak.
+// Ortak parçaları JS template string olarak bir kez yazıp her
+// shader'ın içine ${...} ile gömüyoruz: "aynı gövde, küçük farklar".
+
+// Ortak uniform NESNELERI: spread (...) ile her malzemeye aynı
+// { value: ... } nesnesi gider → bir yerden güncellemek hepsini
+// günceller (JS referans paylaşımı, kopya değil).
+const ortakUniformlar = {
+  uDerinlikDoku: { value: null },              // BLOK 4'te dolduracağız
+  uCozunurluk:   { value: new THREE.Vector2() }, // drawing buffer boyutu (device px)
+  uKameraYakin:  { value: camera.near },
+  uKameraUzak:   { value: camera.far },
+  uPixelYariCap: { value: 1 },                 // ekran yarı yüksekliği (device px) — resize'da güncellenir
+  uTime:         { value: 0 }                  // sadece sis salınımı kullanıyor
+};
+
+// Soft-fade fonksiyonu (GLSL): mantığın adım adım anlatımı BLOK 4'te,
+// GPU tarafındaki hali burada. Her fragment "arkamdaki zemine kaç metre
+// var?" diye sorar, mesafe azaldıkça şeffaflaşır.
+const SOFT_FADE_GLSL = /* glsl */`
+  // packing chunk'ı three.js'ten hazır geliyor: perspectiveDepthToViewZ
+  // gibi derinlik dönüşüm fonksiyonlarını içerir. ShaderMaterial'de
+  // #include satırlarını three derlemeden önce metin olarak yerleştirir.
+  #include <packing>
+  uniform sampler2D uDerinlikDoku;  // opak sahnenin derinlik fotoğrafı (BLOK 4)
+  uniform vec2  uCozunurluk;        // ekran boyutu (device piksel)
+  uniform float uKameraYakin;       // camera.near — derinlik çözmek için şart
+  uniform float uKameraUzak;        // camera.far
+  uniform float uYumusaklik;        // kaç metrelik geçiş bandı (katman başına farklı)
+
+  float softFade(float fragViewZ) {
+    // gl_FragCoord.xy = bu pikselin ekran koordinatı (piksel cinsinden).
+    // Çözünürlüğe bölünce 0..1 UV çıkar → derinlik dokusunda TAM bu
+    // pikselin arkasında ne var, onu okuruz.
+    vec2 uv = gl_FragCoord.xy / uCozunurluk;
+    float sahneDerinlik = texture2D(uDerinlikDoku, uv).x;   // 0..1 ham derinlik
+    // Ham derinlik doğrusal DEĞİL (perspektif sıkıştırır) — metreyle
+    // karşılaştırmak için kamera-uzayı z'sine (viewZ) çeviriyoruz.
+    float sahneViewZ = perspectiveDepthToViewZ(sahneDerinlik, uKameraYakin, uKameraUzak);
+    // viewZ kameranın ÖNÜNDE negatiftir (kamera -z'ye bakar). Parçacık
+    // zeminin önündeyse fragViewZ, sahneViewZ'den BÜYÜKTÜR (daha az
+    // negatif); fark = ikisi arasındaki metre cinsinden boşluk.
+    // smoothstep: boşluk 0 m → alfa 0 (görünmez), uYumusaklik m ve
+    // üzeri → alfa 1 (tam görünür). Arası yumuşak rampa.
+    return smoothstep(0.0, uYumusaklik, fragViewZ - sahneViewZ);
+  }
+`;
+
+// ---- 3b. Jet vertex shader -----------------------------------
+const jetVertex = /* glsl */`
+  // three.js ShaderMaterial'e şunları BEDAVA enjekte eder (yazmayız):
+  //   attribute vec3 position;
+  //   uniform mat4 modelViewMatrix, projectionMatrix; ...
+  attribute float aSize;   // damla başına boy çarpanı (0.6–1.4) — tekdüzeliği kırar
+  attribute float aVy;     // damlanın dikey hızı, her karede CPU'dan gelir (köpük hilesi)
+  uniform float uSize;         // taban boy (metre)
+  uniform float uPixelYariCap; // ekran yarı yüksekliği (device piksel)
+  varying float vVy;           // fragment'a taşı
+  varying float vViewZ;        // kamera-uzayı z — soft fade bunu ister
+
+  void main() {
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);  // dünya → kamera uzayı
+    vViewZ = mvPosition.z;   // önümüzdeki her şeyde NEGATİF (kamera -z'ye bakar)
+    vVy = aVy;
+    // sizeAttenuation'ın el yapımı hali. Perspektifte "uzak = küçük"
+    // demek -z'ye bölmek demektir (projeksiyonun yaptığı da bu):
+    //   pikselBoyu = dünyaBoyu(m) * ekranYarıYükseklik(px) / uzaklık(m)
+    // uPixelYariCap = drawingBuffer yüksekliği / 2. Bu, PointsMaterial'in
+    // içinde gömülü olan formülün BİREBİR aynısı — artık bizim elimizde.
+    gl_PointSize = uSize * aSize * (uPixelYariCap / -mvPosition.z);
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`;
+
+// ---- 3c. Jet fragment shader ---------------------------------
+const jetFragment = /* glsl */`
+  uniform sampler2D uDoku;  // damlaDoku (BLOK 2)
+  uniform vec3  uRenk;
+  uniform float uAlfa;
+  varying float vVy;
+  varying float vViewZ;
+  ${SOFT_FADE_GLSL}
+
+  void main() {
+    // gl_PointCoord: bu parçacığın kendi karesi içindeki 0..1 koordinat.
+    // GL_POINTS'in hediyesi — UV hesabı yapmadan sprite basmamızı sağlar.
+    float doku = texture2D(uDoku, gl_PointCoord).a;
+    if (doku < 0.01) discard;  // sprite köşeleri tam şeffaf — hiç yazma, boşa iş yapma
+
+    // KÖPÜK HİLESİ: köpük ayrı bir parçacık DEĞİL — yavaşlayan suyun
+    // beyazlaması. Gerçekte de öyle: jet tepede durur gibi olur, su
+    // havayla karışır, beyazlaşır. Tepe noktasının imzası dikey hızın
+    // sıfıra inmesi → |aVy| küçüldükçe beyaza ve parlaklığa kay.
+    // smoothstep(0.5, 3.0, |v|): |v| ≤ 0.5 m/s tam köpük, ≥ 3 m/s hiç.
+    float kopuk = 1.0 - smoothstep(0.5, 3.0, abs(vVy));
+    vec3 renk = mix(uRenk, vec3(1.0), kopuk * 0.9);     // maviden beyaza
+    float alfa = uAlfa * doku * mix(1.0, 1.8, kopuk);   // köpük daha yoğun görünür
+
+    alfa *= softFade(vViewZ);  // zemine yaklaşan piksel yumuşakça söner (BLOK 4)
+    gl_FragColor = vec4(renk, alfa);
+  }
+`;
+
+// ---- 3d. CPU balistik sim (Ders 1'in aynısı) ------------------
+const N = 6000;
+const positions  = new Float32Array(N * 3);
+const velocities = new Float32Array(N * 3);   // sadece CPU'da
+const jetSize    = new Float32Array(N);       // aSize — bir kez doldurulur
+const jetVy      = new Float32Array(N);       // aVy — her karede CPU'dan kopyalanır
+
+const JET_SPEED = 11;                          // m/s → tepe ≈ v²/2g ≈ 6.2 m
+const SPREAD = 0.045;
+const G = 9.81;
+const FLIGHT_TIME = 2 * JET_SPEED / G;         // çıkış→tepe→havuz ≈ 2.24 sn
+const TEPE = JET_SPEED * JET_SPEED / (2 * G);  // ≈ 6.2 m — sis katmanı kullanacak
+
+function respawn(i) {
+  positions[i * 3 + 0] = 0;
+  positions[i * 3 + 1] = 0;
+  positions[i * 3 + 2] = 0;
+  const a = Math.random() * Math.PI * 2;
+  const r = Math.random() * SPREAD;
+  velocities[i * 3 + 0] = Math.sin(a) * r * JET_SPEED;
+  velocities[i * 3 + 1] = JET_SPEED * (0.94 + Math.random() * 0.12);
+  velocities[i * 3 + 2] = Math.cos(a) * r * JET_SPEED;
+}
+// Kapalı-form faz saçılımı (Ders 1'deki "yumru" dersinin çözümü):
+// her damlayı sanki t saniye önce fırlamış gibi ışınla.
+function scatter(i) {
+  respawn(i);
+  const t = Math.random() * FLIGHT_TIME;
+  positions[i * 3 + 0] += velocities[i * 3 + 0] * t;
+  positions[i * 3 + 1] += velocities[i * 3 + 1] * t - 0.5 * G * t * t;
+  positions[i * 3 + 2] += velocities[i * 3 + 2] * t;
+  velocities[i * 3 + 1] -= G * t;
+}
+for (let i = 0; i < N; i++) {
+  scatter(i);
+  jetSize[i] = 0.6 + Math.random() * 0.8;      // 0.6–1.4 boy çarpanı
+}
+
+const jetGeo = new THREE.BufferGeometry();
+jetGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+jetGeo.setAttribute('aSize', new THREE.BufferAttribute(jetSize, 1));
+jetGeo.setAttribute('aVy', new THREE.BufferAttribute(jetVy, 1));
+// Her karede değişen attribute'lara DynamicDrawUsage ipucu ver:
+// sürücü bunları "sık yazılan" bellek bölgesine koyar.
+jetGeo.attributes.position.setUsage(THREE.DynamicDrawUsage);
+jetGeo.attributes.aVy.setUsage(THREE.DynamicDrawUsage);
+
+// Uniform yardımcısı: ortak nesneler + katmana özel olanlar.
+// Spread referansları kopyalar, değerleri DEĞİL → ortaklar paylaşımlı kalır.
+function katmanUniformlari(ozel) {
+  return { ...ortakUniformlar, ...ozel };
+}
+
+const jetMat = new THREE.ShaderMaterial({
+  uniforms: katmanUniformlari({
+    uDoku:       { value: damlaDoku },
+    uRenk:       { value: new THREE.Color(0xbfe3ff) },
+    uAlfa:       { value: 0.55 },
+    uSize:       { value: 0.07 },                // metre — Ders 1'deki size ile aynı
+    uYumusaklik: { value: 0.4 }                  // ~0.4 m'lik geçiş bandı
+  }),
+  vertexShader: jetVertex,
+  fragmentShader: jetFragment,
+  transparent: true,
+  depthWrite: false,               // yarı saydamlar birbirini bloke etmesin (Ders 1'deki ders)
+  blending: THREE.AdditiveBlending // üst üste binen su parlar — bloom bunu ödüllendirecek
+});
+
+const jet = new THREE.Points(jetGeo, jetMat);
+scene.add(jet);
+
+// Jet fizik adımı: Ders 1 + her damlanın v.y'sini shader'a kopyala
+function jetStep(dt) {
+  for (let i = 0; i < N; i++) {
+    velocities[i * 3 + 1] -= G * dt;
+    positions[i * 3 + 0] += velocities[i * 3 + 0] * dt;
+    positions[i * 3 + 1] += velocities[i * 3 + 1] * dt;
+    positions[i * 3 + 2] += velocities[i * 3 + 2] * dt;
+    if (positions[i * 3 + 1] < 0) respawn(i);
+    jetVy[i] = velocities[i * 3 + 1];  // köpük hilesinin yakıtı: CPU→GPU köprüsü
+  }
+  jetGeo.attributes.position.needsUpdate = true;  // "dizi değişti, GPU'ya tekrar yolla"
+  jetGeo.attributes.aVy.needsUpdate = true;
+}
+
+// ============================================================
+// BLOK 4 — SOFT PARTICLES (dersin kalbi)
+// Sorun: parçacık sprite'ı zemin düzlemini kestiği yerde bıçakla
+// kesilmiş gibi sert bir çizgi oluşur (depth test pikseli ya tam
+// çizer ya hiç çizmez). Gerçek suda böyle çizgi yok.
+// Fikir: GPU zaten her pikselin kameraya uzaklığını biliyor —
+// derinlik tamponunda duruyor. Onu dokuya çekip parçacık shader'ında
+// okursak "arkamdaki zemine kaç metre var?" sorusuna cevap alırız;
+// parçacık pikseli zemine yaklaştıkça şeffaflaştırırız. Sert kesişim
+// çizgisi yumuşak bir kaybolmaya dönüşür.
+// ============================================================
+
+// Derinlik fotoğrafını çekeceğimiz hedef. Renk dokusu da var ama onu
+// hiç kullanmayacağız — WebGL'de "sadece derinlik" hedefi diye pratik
+// bir kısayol yok, renk eki yanında bedavaya gelir.
+const dbBoyut = new THREE.Vector2();
+renderer.getDrawingBufferSize(dbBoyut);  // CSS boyutu DEĞİL: pixelRatio dahil gerçek piksel
+const depthTarget = new THREE.WebGLRenderTarget(dbBoyut.x, dbBoyut.y, {
+  depthBuffer: true,     // derinlik tamponu olmadan derinlik fotoğrafı olmaz
+  stencilBuffer: false   // stencil kullanmıyoruz; açık kalırsa depth+stencil paketlenir
+                         // ve DepthTexture formatının onunla eşleşmesi gerekirdi
+});
+// Asıl numara: hedefe bir DepthTexture takınca GPU derinlik değerlerini
+// sonradan OKUNABİLİR bir dokuya yazar (normalde derinlik tamponu kapalı kutudur).
+depthTarget.depthTexture = new THREE.DepthTexture(dbBoyut.x, dbBoyut.y);
+depthTarget.depthTexture.format = THREE.DepthFormat;      // sadece derinlik (stencil'siz — yukarıyla tutarlı)
+depthTarget.depthTexture.type = THREE.UnsignedIntType;    // 24-bit hassasiyet; UnsignedShort 16-bit'te bantlanır
+
+// Şimdi BLOK 3'te boş bıraktığımız ortak uniform'u doldurabiliriz:
+ortakUniformlar.uDerinlikDoku.value = depthTarget.depthTexture;
+
+// Her karede çağrılacak ön-geçiş: SADECE opak sahneyi (zemin) hedefe çiz.
+// Parçacıklar derinlik fotoğrafına GİRMEMELİ — kendi kendilerine karşı
+// fade olurlardı. En basit ve okunaklı yöntem: görünürlüğü kapat-aç.
+// (Alternatif: layers maskesi — daha şık ama ilk derste kafa karıştırır.)
+const katmanlar = [];  // jet + splash + sis buraya eklenecek (BLOK 5 sonunda tamamlanır)
+katmanlar.push(jet);
+
+function derinlikOnGecisi() {
+  for (const k of katmanlar) k.visible = false;
+  renderer.setRenderTarget(depthTarget);   // "artık ekrana değil bu hedefe çiz"
+  renderer.render(scene, camera);          // zemin çizilir → derinliği dokuya yazılır
+  renderer.setRenderTarget(null);          // ekrana (composer'a) geri dön
+  for (const k of katmanlar) k.visible = true;
+}
+
+// Çözünürlüğe bağlı her şeyi tek yerden güncelle (ilk kurulum + resize).
+function cozunurlukGuncelle() {
+  renderer.getDrawingBufferSize(dbBoyut);
+  depthTarget.setSize(dbBoyut.x, dbBoyut.y);                 // depthTexture'ı da beraber büyütür
+  ortakUniformlar.uCozunurluk.value.copy(dbBoyut);           // gl_FragCoord → UV çevirisi için
+  ortakUniformlar.uPixelYariCap.value = dbBoyut.y * 0.5;     // el yapımı sizeAttenuation'ın ölçeği
+}
+cozunurlukGuncelle();
+
+// ============================================================
+// BLOK 5 — SPLASH + SİS: SANAT KATMANLAMASI
+// İnandırıcılığın motor tarafı bitti; kalan kısım sanat. Gerçek çeşme
+// tek bir parçacık sistemi değil, üst üste yağan olaylar bütünü:
+//   gövde (BLOK 3) + düşüş bölgesinde sıçrama + havada asılı sis.
+// Her katman AYRI bir yalan söyler; toplamı gerçeğe benzer.
+// ============================================================
+
+// ---- 5a. SPLASH — düşüş halkasında sıçrama --------------------
+// Tasarım kararı: gövde damlası yere değince oradan splash tetiklemek
+// "fiziksel olarak doğru" olurdu ama iki sistemin dizilerini birbirine
+// zincirler (respawn eden damla → boşta splash slotu ara → kopyala...).
+// Bunun yerine BAĞIMSIZ halka emitter kullanıyoruz: katmanlama dersinin
+// ana fikri zaten katmanların bağımsız yalanlar olması. Yalanı tutarlı
+// kılan şey halkanın yarıçapını FİZİKTEN türetmek: damlanın yatay hızı
+// en fazla SPREAD·JET_SPEED, uçuş süresi FLIGHT_TIME → düşüş yarıçapı:
+const DUSUS_YARICAP = SPREAD * JET_SPEED * FLIGHT_TIME;   // ≈ 1.1 m
+
+const SPLASH_N = 1500;
+const sPos  = new Float32Array(SPLASH_N * 3);
+const sVel  = new Float32Array(SPLASH_N * 3);  // CPU'da kalır
+const sYas  = new Float32Array(SPLASH_N);      // saniye (CPU)
+const sOmur = new Float32Array(SPLASH_N);      // saniye (CPU)
+const sAge  = new Float32Array(SPLASH_N);      // aAge attribute: yaş/ömür (0..1)
+const sSize = new Float32Array(SPLASH_N);
+
+function splashRespawn(i) {
+  const a = Math.random() * Math.PI * 2;
+  // halka: tam çember değil bant — su hep aynı çizgiye düşmez
+  const r = DUSUS_YARICAP * (0.55 + Math.random() * 0.55);
+  sPos[i * 3 + 0] = Math.cos(a) * r;
+  sPos[i * 3 + 1] = 0.02;                       // zeminin hemen üstü (z-fighting'den kaç)
+  sPos[i * 3 + 2] = Math.sin(a) * r;
+  // dışa + yukarı düşük hız: çarpan su alçak bir taç gibi saçılır
+  const disaHiz = 0.3 + Math.random() * 0.9;
+  sVel[i * 3 + 0] = Math.cos(a) * disaHiz;      // merkezden DIŞARI (a açısı konumla aynı)
+  sVel[i * 3 + 1] = 0.7 + Math.random() * 1.3;  // yukarı: ~10–20 cm yükselir, geri düşer
+  sVel[i * 3 + 2] = Math.sin(a) * disaHiz;
+  sYas[i] = 0;
+  sOmur[i] = 0.35 + Math.random() * 0.3;        // ~0.5 s: sıçrama kısa yaşar
+}
+for (let i = 0; i < SPLASH_N; i++) {
+  splashRespawn(i);
+  sYas[i] = Math.random() * sOmur[i];  // faz saçılımı — jet'teki "yumru" dersinin aynısı
+  sSize[i] = 0.6 + Math.random() * 0.8;
+}
+
+// Splash vertex: jet'inkiyle aynı iskelet, fark = aVy yerine aAge taşır
+// ve sprite yaşlandıkça hafif büyür (dağılan su genişler).
+const splashVertex = /* glsl */`
+  attribute float aSize;
+  attribute float aAge;    // 0..1 normalize yaş — CPU her karede yazar
+  uniform float uSize;
+  uniform float uPixelYariCap;
+  varying float vAge;
+  varying float vViewZ;
+
+  void main() {
+    vAge = aAge;
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    vViewZ = mvPosition.z;
+    // (1.0 + vAge*1.5): sıçrayan su yaşlandıkça dağılıp genişler
+    gl_PointSize = uSize * aSize * (1.0 + vAge * 1.5) * (uPixelYariCap / -mvPosition.z);
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`;
+
+const splashFragment = /* glsl */`
+  uniform sampler2D uDoku;
+  uniform vec3  uRenk;
+  uniform float uAlfa;
+  varying float vAge;
+  varying float vViewZ;
+  ${SOFT_FADE_GLSL}
+
+  void main() {
+    float doku = texture2D(uDoku, gl_PointCoord).a;
+    if (doku < 0.01) discard;
+    float yasSonum = 1.0 - vAge;          // doğar parlak, ölürken söner
+    float alfa = uAlfa * doku * yasSonum;
+    alfa *= softFade(vViewZ);
+    gl_FragColor = vec4(uRenk, alfa);
+  }
+`;
+
+const splashGeo = new THREE.BufferGeometry();
+splashGeo.setAttribute('position', new THREE.BufferAttribute(sPos, 3));
+splashGeo.setAttribute('aSize', new THREE.BufferAttribute(sSize, 1));
+splashGeo.setAttribute('aAge', new THREE.BufferAttribute(sAge, 1));
+splashGeo.attributes.position.setUsage(THREE.DynamicDrawUsage);
+splashGeo.attributes.aAge.setUsage(THREE.DynamicDrawUsage);
+
+const splashMat = new THREE.ShaderMaterial({
+  uniforms: katmanUniformlari({
+    uDoku:       { value: damlaDoku },
+    uRenk:       { value: new THREE.Color(0xcfe9ff) },
+    uAlfa:       { value: 0.5 },
+    uSize:       { value: 0.05 },
+    // ŞARTNAMEDEN SAPMA (gerekçeli): splash ömrünün tamamını zeminin
+    // 15 cm üstünde geçirir. 0.4 m'lik band onu neredeyse tamamen
+    // yutar — bu katmana 0.15 m veriyoruz ki görünür kalsın ama
+    // zemine değdiği yerde yine yumuşak sönsün.
+    uYumusaklik: { value: 0.15 }
+  }),
+  vertexShader: splashVertex,
+  fragmentShader: splashFragment,
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending
+});
+
+const splash = new THREE.Points(splashGeo, splashMat);
+scene.add(splash);
+katmanlar.push(splash);   // derinlik ön-geçişinde o da gizlenecek
+
+function splashStep(dt) {
+  for (let i = 0; i < SPLASH_N; i++) {
+    sVel[i * 3 + 1] -= G * dt;
+    sPos[i * 3 + 0] += sVel[i * 3 + 0] * dt;
+    sPos[i * 3 + 1] += sVel[i * 3 + 1] * dt;
+    sPos[i * 3 + 2] += sVel[i * 3 + 2] * dt;
+    sYas[i] += dt;
+    if (sYas[i] > sOmur[i] || sPos[i * 3 + 1] < 0) splashRespawn(i);
+    sAge[i] = sYas[i] / sOmur[i];
+  }
+  splashGeo.attributes.position.needsUpdate = true;
+  splashGeo.attributes.aAge.needsUpdate = true;
+}
+
+// ---- 5b. SİS — havada asılı su tozu ---------------------------
+// Az sayıda (250) ama ÇOK BÜYÜK sprite. Jet dibinde (çarpma noktası su
+// tozu üretir) ve tepe civarında (köpüğün etrafa savrulan zerresi) doğar,
+// yavaşça yükselir, hafif salınır, 3–6 saniyede kaybolur.
+const SIS_N = 250;
+const mPos      = new Float32Array(SIS_N * 3);
+const mYukselme = new Float32Array(SIS_N);   // m/s — parçacık başına yükselme hızı
+const mYas      = new Float32Array(SIS_N);
+const mOmur     = new Float32Array(SIS_N);
+const mAge      = new Float32Array(SIS_N);   // aAge attribute (0..1)
+const mFaz      = new Float32Array(SIS_N);   // aFaz — salınım fazı, bir kez atanır
+const mSize     = new Float32Array(SIS_N);
+
+function sisRespawn(i) {
+  const a = Math.random() * Math.PI * 2;
+  if (Math.random() < 0.6) {
+    // %60 dipte: splash halkasının üstünde alçak bir sis yatağı
+    const r = Math.random() * 1.3;
+    mPos[i * 3 + 0] = Math.cos(a) * r;
+    mPos[i * 3 + 1] = 0.1 + Math.random() * 0.5;
+    mPos[i * 3 + 2] = Math.sin(a) * r;
+  } else {
+    // %40 tepede: köpük bölgesinin etrafında savrulan zerre
+    const r = Math.random() * 0.7;
+    mPos[i * 3 + 0] = Math.cos(a) * r;
+    mPos[i * 3 + 1] = TEPE - 0.6 + Math.random() * 1.4;
+    mPos[i * 3 + 2] = Math.sin(a) * r;
+  }
+  mYukselme[i] = 0.12 + Math.random() * 0.18;  // su tozu sıcak havayla süzülür
+  mYas[i] = 0;
+  mOmur[i] = 3 + Math.random() * 3;            // 3–6 s
+}
+for (let i = 0; i < SIS_N; i++) {
+  sisRespawn(i);
+  mYas[i] = Math.random() * mOmur[i];          // yine faz saçılımı
+  mFaz[i] = Math.random() * Math.PI * 2;
+  mSize[i] = 0.7 + Math.random() * 0.9;
+}
+
+// Sis vertex: salınımı CPU'da DEĞİL shader'da yapıyoruz — uTime + faz
+// yeter, konum dizisine dokunmadan her sprite kendi kendine sallanır.
+// (Öğretici nokta: durum gerektirmeyen animasyon shader'da bedava.
+// Ders 3'te bu fikri sonuna kadar iteceğiz.)
+const sisVertex = /* glsl */`
+  attribute float aSize;
+  attribute float aAge;
+  attribute float aFaz;    // parçacık başına salınım fazı — hepsi aynı anda sallanmasın
+  uniform float uSize;
+  uniform float uPixelYariCap;
+  uniform float uTime;
+  varying float vAge;
+  varying float vViewZ;
+
+  void main() {
+    vAge = aAge;
+    vec3 p = position;
+    // sin tabanlı hafif yatay salınım: frekanslar kasten farklı (0.5 / 0.4)
+    // ve faz çarpanı 1.7 — ortak periyot uzasın, hareket döngü gibi durmasın
+    p.x += sin(uTime * 0.5 + aFaz) * 0.35;
+    p.z += cos(uTime * 0.4 + aFaz * 1.7) * 0.35;
+    vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
+    vViewZ = mvPosition.z;
+    gl_PointSize = uSize * aSize * (uPixelYariCap / -mvPosition.z);
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`;
+
+const sisFragment = /* glsl */`
+  uniform sampler2D uDoku;
+  uniform vec3  uRenk;
+  uniform float uAlfa;
+  varying float vAge;
+  varying float vViewZ;
+  ${SOFT_FADE_GLSL}
+
+  void main() {
+    float doku = texture2D(uDoku, gl_PointCoord).a;
+    // Yaş zarfı: sis aniden belirirse göz yakalar. Doğarken yumuşak
+    // belir (0→0.15), ömrün son yarısında yavaşça sön (0.55→1).
+    float zarf = smoothstep(0.0, 0.15, vAge) * (1.0 - smoothstep(0.55, 1.0, vAge));
+    float alfa = uAlfa * doku * zarf * softFade(vViewZ);
+    gl_FragColor = vec4(uRenk, alfa);
+  }
+`;
+
+const sisGeo = new THREE.BufferGeometry();
+sisGeo.setAttribute('position', new THREE.BufferAttribute(mPos, 3));
+sisGeo.setAttribute('aSize', new THREE.BufferAttribute(mSize, 1));
+sisGeo.setAttribute('aAge', new THREE.BufferAttribute(mAge, 1));
+sisGeo.setAttribute('aFaz', new THREE.BufferAttribute(mFaz, 1));
+sisGeo.attributes.position.setUsage(THREE.DynamicDrawUsage);
+sisGeo.attributes.aAge.setUsage(THREE.DynamicDrawUsage);
+
+const sisMat = new THREE.ShaderMaterial({
+  uniforms: katmanUniformlari({
+    uDoku:       { value: sisDoku },
+    uRenk:       { value: new THREE.Color(0x9fc4e0) },
+    uAlfa:       { value: 0.05 },   // çok düşük — 250 dev sprite toplanınca yeter de artar
+    uSize:       { value: 2.2 },    // metre! damla değil bulut yaması
+    // Sis dev bir hacim yalanı — zemine 0.8 m kala erimeye başlasın ki
+    // en büyük sprite'lar bile zeminle asla sert kenar yapmasın.
+    uYumusaklik: { value: 0.8 }
+  }),
+  vertexShader: sisVertex,
+  fragmentShader: sisFragment,
+  transparent: true,
+  depthWrite: false,
+  // Blending kararı: additive DEĞİL, normal. İki gerekçe:
+  //  1) Additive sis üst üste TOPLANIR → parlak bölgeler bloom eşiğini
+  //     besler, sahne süte döner. Normal blending örter ama parlatmaz.
+  //  2) Sis fiziksel olarak ışık kaynağı değil, ışığı SAÇAN bir perde —
+  //     önündekini hafifçe soluklaştırması (normal blending'in yaptığı)
+  //     doğru his.
+  blending: THREE.NormalBlending
+});
+
+const sis = new THREE.Points(sisGeo, sisMat);
+sis.renderOrder = 1;  // sis en son çizilsin: perde en öne asılır
+scene.add(sis);
+katmanlar.push(sis);  // derinlik ön-geçişi listesi tamamlandı: jet + splash + sis
+
+function sisStep(dt) {
+  for (let i = 0; i < SIS_N; i++) {
+    mPos[i * 3 + 1] += mYukselme[i] * dt;  // sadece yükselme CPU'da; salınım shader'da
+    mYas[i] += dt;
+    if (mYas[i] > mOmur[i]) sisRespawn(i);
+    mAge[i] = mYas[i] / mOmur[i];
+  }
+  sisGeo.attributes.position.needsUpdate = true;
+  sisGeo.attributes.aAge.needsUpdate = true;
+}
+
+// ============================================================
+// BLOK 6 — BLOOM (EffectComposer)
+// Son yalan: gerçek gece çeşmesinde projektör ışığı su zerrelerinde
+// saçılıp kameranın gözünde hale yapar. Ekranda bunun taklidi bloom:
+// eşiği aşan parlak pikseller bulanıklaştırılıp görüntünün üstüne
+// geri eklenir. Additive parçacıklarımız üst üste bindikçe parlaklık
+// TOPLANDIĞI için eşiği tam da yoğun su bölgelerinde aşar — yani
+// bloom otomatik olarak "suyun en yoğun yerini" parlatır.
+// EffectComposer = render'ı ekran yerine doku zincirinden geçiren boru hattı.
+// ============================================================
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));  // 1. sahneyi dokuya çiz
+const bloomPass = new UnrealBloomPass(
+  new THREE.Vector2(innerWidth, innerHeight),
+  0.8,   // strength: halenin gücü
+  0.5,   // radius: halenin yayılma yarıçapı
+  0.2    // threshold: bu parlaklığın altı bloom'a girmez —
+         // 0.2 sayesinde koyu zemin/fon temiz kalır, sadece su parlar
+);
+composer.addPass(bloomPass);
+// OutputPass (r166'nın doğru son halkası): tone mapping + linear→sRGB
+// çevrimini yapar. Bunsuz composer çıktısı soluk/yanlış renkte görünür,
+// çünkü zincir içinde her şey linear uzayda hesaplanır.
+composer.addPass(new OutputPass());
+
+// ============================================================
+// BLOK 7 — RENDER DÖNGÜSÜ
+// Ders 1'in döngüsü + iki yeni adım: derinlik ön-geçişi ve
+// renderer.render yerine composer.render. Kare planı:
+//   dt ölç → 3 katmanın fiziğini ilerlet → derinlik fotoğrafı çek
+//   → composer (sahne + bloom + output) → fps say
+// ============================================================
+
+const clock = new THREE.Clock();
+let simZaman = 0;
+let frames = 0, fpsTimer = 0;
+const fpsEl = document.getElementById('fps');
+
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 1 / 20);  // takılmalarda dev dt sıçramasını kırp (Ders 1)
+  simZaman += dt;
+  ortakUniformlar.uTime.value = simZaman;         // sis salınımının saati
+
+  jetStep(dt);
+  splashStep(dt);
+  sisStep(dt);
+  controls.update();
+
+  derinlikOnGecisi();               // 1) parçacıksız sahnenin derinlik fotoğrafı
+  composer.render();                // 2) asıl kare: sahne → bloom → sRGB çıktı
+
+  frames++; fpsTimer += dt;
+  if (fpsTimer >= 1) { fpsEl.textContent = frames; frames = 0; fpsTimer = 0; }
+});
+
+// Resize: Ders 1'e ek olarak composer ve derinlik hedefi de boyut ister —
+// unutulursa bloom eski çözünürlükte kalır, soft fade UV'leri kayar.
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);  // pixelRatio'yu kendi içinde hesaba katar
+  cozunurlukGuncelle();                       // depthTarget + uCozunurluk + uPixelYariCap
+});
+
+// Debug kancası: konsoldan canlı dürtme.
+// Örn: DERS2.bloomPass.strength = 1.5
+//      DERS2.jetMat.uniforms.uYumusaklik.value = 0  → soft fade kapat, sert çizgiyi GÖR
+window.DERS2 = {
+  renderer, scene, camera, composer, bloomPass, depthTarget,
+  jet, splash, sis, jetMat, splashMat, sisMat,
+  ortakUniformlar, jetStep, splashStep, sisStep
+};
+</script>
+</body>
+</html>

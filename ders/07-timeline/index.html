@@ -1,0 +1,736 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>Ders 7 — Timeline JSON (şovun omurgası · veri sahneyi sürer)</title>
+<style>
+  body { margin: 0; overflow: hidden; background: #000; }
+  #info {
+    position: fixed; top: 8px; left: 8px;
+    color: #8fd3ff; font: 13px/1.5 Consolas, monospace;
+    text-shadow: 0 1px 2px #000; z-index: 2;
+  }
+  b { color: #ffd27f; }
+  /* şov konumu çubuğu (BLOK 9): timeline'ın neresindeyiz */
+  #barKutu {
+    position: fixed; left: 0; right: 0; bottom: 0; height: 4px;
+    background: rgba(255,255,255,0.10); z-index: 2;
+  }
+  #bar { height: 100%; width: 0; background: #8fd3ff; }
+  #etiket {
+    position: fixed; bottom: 10px; left: 8px;
+    color: #cfe8ff; font: 12px Consolas, monospace; text-shadow: 0 1px 2px #000; z-index: 2;
+  }
+</style>
+</head>
+<body>
+<div id="info">Ders 7 — <b>timeline JSON</b> sahneyi sürer &middot; <span id="sayi">-</span> parçacık &middot; sol tık: döndür · teker: zoom · <span id="fps">-</span> fps</div>
+<div id="etiket">şov: <span id="sure">0.0</span>s</div>
+<div id="barKutu"><div id="bar"></div></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { GPUComputationRenderer } from 'three/addons/misc/GPUComputationRenderer.js';
+
+// ============================================================
+// DERS 7 — TIMELINE JSON: ŞOVUN OMURGASI
+//
+// Ders 1-6 boyunca su ve ışığı çizmeyi öğrendik; ama ortada bir ŞOV yok.
+// Su hep aynı yükseklikte akıyor, ışık sadece kendi kendine renk döndürüyor.
+// Şov = ZAMANLA DEĞİŞEN, KOREOGRAFİ EDİLMİŞ hareket. Onu üreten şey de bu
+// projenin en kritik mimari kararı (SCOPE):
+//
+//   TÜM ŞOV = TEK BİR TIMELINE JSON. Cihaz kanalı + zaman + değer.
+//   Motor bu JSON'u OKUR ve her kare sahneyi ona göre sürer.
+//
+// Neden JSON omurgası "1. günden" kritik? Çünkü P3 fazında (müzik analizi =
+// eski Seçenek 1) besteci-modül AYNI formatı üretecek: beat/enerji/drop →
+// otomatik kanal anahtarları. Yani bugün ELLE yazdığımız timeline'ı, yarın
+// müzikten OTOMATİK doğuracağız — ama format aynı kalırsa oynatıcı hiç
+// değişmez (tak-çalıştır). Format = ESA Pro'nun "cue" mantığına yakın ama
+// bizim, açık ve türetilebilir hâli.
+//
+// Bu dersin üç parçası:
+//   1) FORMAT (BLOK 8): kanal = {hedef, tip, anahtarlar:[[t,v],...]}.
+//   2) OYNATICI/Zamanlayici (BLOK 8): t anında her kanalı örnekle
+//      (adım/lineer/yumuşak ara-değer) → hedefe gönder.
+//   3) KÖPRÜ (BLOK 8): "hedef" metni → cihaz/ışık setter'ı (kayıt tablosu).
+//      Böylece JSON motoru tanımadan, motor JSON'u tanımadan konuşurlar.
+//
+// Motor Ders 6'nın GPU balistiği; timeline yalnızca birkaç UNIFORM'u
+// (master parlaklık, hız ölçeği, ışık hue/parlaklık) sürer — ucuz köprü.
+// GPU inceliği: hız ölçeği sadece YENİ doğan parçacığa işler → jet
+// yüksekliği ~bir ömür boyunca yumuşakça rampalanır (gerçek çeşme gibi).
+// ============================================================
+
+// ============================================================
+// BLOK 1 — SAHNE (Ders 6'dan aynen)
+// ============================================================
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x050810);
+scene.fog = new THREE.Fog(0x050810, 18, 55);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(7, 4, 11);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 2.5, 0);
+controls.enableDamping = true;
+
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(10, 48),
+  new THREE.MeshStandardMaterial({ color: 0x0a1622, roughness: 0.35, metalness: 0.2 })
+);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+scene.add(new THREE.AmbientLight(0x223344, 0.4));
+
+const G = 9.81;
+
+// ============================================================
+// BLOK 2 — SPRITE DOKU (Ders 6'dan aynen)
+// ============================================================
+
+function dokuUret(ciz) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  ciz(c.getContext('2d'), 128);
+  return new THREE.CanvasTexture(c);
+}
+const damlaDoku = dokuUret((ctx, S) => {
+  const g = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  g.addColorStop(0.0,  'rgba(255,255,255,1)');
+  g.addColorStop(0.35, 'rgba(255,255,255,0.75)');
+  g.addColorStop(1.0,  'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, S, S);
+});
+
+// ============================================================
+// BLOK 3 — SU CİHAZLARI = VERİ (Ders 6). Preset yapısı aynı.
+// ============================================================
+
+const PRESETLER = {
+  duz_jet: {
+    konum: [-2, 0, 0], kenar: 176,
+    shape: { type: 'point', angle: 0.05 },
+    particle: { speed: { a: 10.0, b: 12.0 }, life: { a: 2.0, b: 2.3 },
+      size: 0.045, color: '#bfe3ff', alpha: 0.08, aeration: 0.35 },
+    yumusaklik: 0.4
+  },
+  geyser: {
+    konum: [2, 0, 0], kenar: 196,
+    shape: { type: 'disc', radius: 0.28, angle: 0.22 },
+    particle: { speed: { a: 5.5, b: 7.0 }, life: { a: 1.2, b: 1.5 },
+      size: 0.06, color: '#e8f4ff', alpha: 0.03, aeration: 0.75 },
+    yumusaklik: 0.5
+  }
+};
+
+// ---- 3a. Ortak uniform'lar + ışık köprüsü (Ders 5-6'dan aynen) ----
+const N_ISIK = 4;
+const ortakUniformlar = {
+  uDerinlikDoku: { value: null },
+  uCozunurluk:   { value: new THREE.Vector2() },
+  uKameraYakin:  { value: camera.near },
+  uKameraUzak:   { value: camera.far },
+  uPixelYariCap: { value: 1 },
+  uIsikSayisi: { value: 0 },
+  uIsikPos:    { value: Array.from({ length: N_ISIK }, () => new THREE.Vector3()) },
+  uIsikYon:    { value: Array.from({ length: N_ISIK }, () => new THREE.Vector3(0, 1, 0)) },
+  uIsikCosAci: { value: new Array(N_ISIK).fill(1) },
+  uIsikRenk:   { value: Array.from({ length: N_ISIK }, () => new THREE.Color()) },
+  uIsikTepki:  { value: 1.6 },
+  uTabanIsik:  { value: 0.30 }
+};
+function katmanUniformlari(ozel) { return { ...ortakUniformlar, ...ozel }; }
+
+const SOFT_FADE_GLSL = /* glsl */`
+  #include <packing>
+  uniform sampler2D uDerinlikDoku;
+  uniform vec2  uCozunurluk;
+  uniform float uKameraYakin;
+  uniform float uKameraUzak;
+  uniform float uYumusaklik;
+  float softFade(float fragViewZ) {
+    vec2 uv = gl_FragCoord.xy / uCozunurluk;
+    float sahneDerinlik = texture2D(uDerinlikDoku, uv).x;
+    float sahneViewZ = perspectiveDepthToViewZ(sahneDerinlik, uKameraYakin, uKameraUzak);
+    return smoothstep(0.0, uYumusaklik, fragViewZ - sahneViewZ);
+  }
+`;
+
+// ============================================================
+// BLOK 4 — GPU FİZİK ÇEKİRDEĞİ (Ders 6). TEK EKLEME: uHizScale.
+// Timeline "jet yüksekliği" kanalını hız ölçeğine bağlar; respawn'da
+// örneklenen hız bununla çarpılır → sadece yeni parçacık etkilenir,
+// yükseklik yumuşakça rampalanır (GPU'da tüm hızları anında değiştiremeyiz;
+// zaten fiziksel olarak da doğru olan bu).
+// ============================================================
+
+const GPU_ORTAK_GLSL = /* glsl */`
+  float hash11(float p){ p = fract(p * 0.1031); p *= p + 33.33; p *= p + p; return fract(p); }
+  float g_seed;
+  float rnd(){ g_seed += 1.0; return hash11(g_seed); }
+  void cerceve(vec3 n, out vec3 t1, out vec3 t2){
+    vec3 up = abs(n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    t1 = normalize(cross(up, n));
+    t2 = cross(n, t1);
+  }
+  vec3 koniYon(vec3 eksen, float aciMax){
+    vec3 t1, t2; cerceve(eksen, t1, t2);
+    float az = rnd() * 6.2831853;
+    float po = aciMax * sqrt(rnd());
+    return normalize(eksen * cos(po) + (t1 * cos(az) + t2 * sin(az)) * sin(po));
+  }
+`;
+
+const konumShader = /* glsl */`
+  uniform float uDt;
+  uniform float uTime;
+  uniform vec3  uNozulPos;
+  uniform vec3  uNozulYon;
+  uniform float uDiskR;
+  ${GPU_ORTAK_GLSL}
+  void main(){
+    vec2 uv = gl_FragCoord.xy / resolution.xy;
+    vec4 P = texture2D(texturePosition, uv);
+    vec4 V = texture2D(textureVelocity, uv);
+    vec3 pos = P.xyz;  float yas  = P.w;
+    vec3 vel = V.xyz;  float omur = V.w;
+    vel.y -= 9.81 * uDt;
+    pos += vel * uDt;
+    yas += uDt;
+    if (yas >= omur || pos.y < 0.0) {
+      g_seed = dot(uv, vec2(12.9898, 78.233)) + uTime * 7.0 + 3.7;
+      vec3 t1, t2; cerceve(normalize(uNozulYon), t1, t2);
+      float az = rnd() * 6.2831853;
+      float rr = uDiskR * sqrt(rnd());
+      pos = uNozulPos + (t1 * cos(az) + t2 * sin(az)) * rr;
+      yas = 0.0;
+    }
+    gl_FragColor = vec4(pos, yas);
+  }
+`;
+
+const hizShader = /* glsl */`
+  uniform float uDt;
+  uniform float uTime;
+  uniform vec3  uNozulYon;
+  uniform float uKoniAci;
+  uniform float uHizA;
+  uniform float uHizB;
+  uniform float uOmurA;
+  uniform float uOmurB;
+  uniform float uHizScale;   // ⭐ Ders 7: timeline "yükseklik" kanalı buraya bağlanır
+  ${GPU_ORTAK_GLSL}
+  void main(){
+    vec2 uv = gl_FragCoord.xy / resolution.xy;
+    vec4 P = texture2D(texturePosition, uv);
+    vec4 V = texture2D(textureVelocity, uv);
+    float yas  = P.w;
+    vec3 vel = V.xyz;  float omur = V.w;
+    vec3 yeniVel = vel;  yeniVel.y -= 9.81 * uDt;
+    vec3 yeniPos = P.xyz + yeniVel * uDt;
+    float yeniYas = yas + uDt;
+    if (yeniYas >= omur || yeniPos.y < 0.0) {
+      g_seed = dot(uv, vec2(12.9898, 78.233)) + uTime * 7.0;
+      vec3 yon = koniYon(normalize(uNozulYon), uKoniAci);
+      float hiz  = (uHizA + rnd() * (uHizB - uHizA)) * uHizScale;   // ⭐ ölçek
+      omur       = uOmurA + rnd() * (uOmurB - uOmurA);
+      yeniVel = yon * hiz;
+    }
+    gl_FragColor = vec4(yeniVel, omur);
+  }
+`;
+
+const _t1 = new THREE.Vector3(), _t2 = new THREE.Vector3();
+function cerceveJS(n, t1, t2) {
+  const up = Math.abs(n.y) < 0.99 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+  t1.crossVectors(up, n).normalize();
+  t2.crossVectors(n, t1);
+}
+function koniYonJS(eksen, aciMax, hedef) {
+  cerceveJS(eksen, _t1, _t2);
+  const az = Math.random() * Math.PI * 2;
+  const po = aciMax * Math.sqrt(Math.random());
+  hedef.copy(eksen).multiplyScalar(Math.cos(po))
+    .addScaledVector(_t1, Math.cos(az) * Math.sin(po))
+    .addScaledVector(_t2, Math.sin(az) * Math.sin(po));
+}
+
+// ============================================================
+// BLOK 5 — GpuParcaSistemi (Ders 6). EKLEMELER:
+//   • uHizScale uniform (hız shader'ına) + setHiz(k)
+//   • baseAlfa saklanır + setMaster(v): render alfasını çarpar (fade/gate)
+// Bunlar timeline'ın cihaza dokunma yüzeyi (BLOK 8 köprüsü kullanır).
+// ============================================================
+
+const _eksen = new THREE.Vector3(0, 1, 0);
+const _v0 = new THREE.Vector3(), _p = new THREE.Vector3(), _v = new THREE.Vector3();
+
+class GpuParcaSistemi {
+  constructor(preset) {
+    this.preset = preset;
+    const W = preset.kenar, H = preset.kenar;
+    this.sayi = W * H;
+    const p = preset.particle;
+    this.baseAlfa = p.alpha;   // ⭐ master için taban
+
+    const nozul = new THREE.Vector3().fromArray(preset.konum);
+    const diskR = preset.shape.type === 'disc' ? preset.shape.radius : 0.0;
+    const koniAci = preset.shape.angle;
+
+    this.gpu = new GPUComputationRenderer(W, H, renderer);
+    this.gpu.setDataType(THREE.FloatType);
+    const dtPos = this.gpu.createTexture();
+    const dtVel = this.gpu.createTexture();
+    const posD = dtPos.image.data, velD = dtVel.image.data;
+
+    for (let i = 0; i < this.sayi; i++) {
+      const hiz  = p.speed.a + Math.random() * (p.speed.b - p.speed.a);
+      const omur = p.life.a  + Math.random() * (p.life.b  - p.life.a);
+      const t0   = Math.random() * omur;
+      koniYonJS(_eksen, koniAci, _v0);
+      _v0.multiplyScalar(hiz);
+      _p.copy(nozul);
+      if (diskR > 0) {
+        cerceveJS(_eksen, _t1, _t2);
+        const a = Math.random() * Math.PI * 2;
+        const r = diskR * Math.sqrt(Math.random());
+        _p.addScaledVector(_t1, Math.cos(a) * r).addScaledVector(_t2, Math.sin(a) * r);
+      }
+      _p.addScaledVector(_v0, t0);  _p.y -= 0.5 * G * t0 * t0;
+      _v.copy(_v0);  _v.y -= G * t0;
+      const k = i * 4;
+      posD[k] = _p.x; posD[k+1] = _p.y; posD[k+2] = _p.z; posD[k+3] = t0;
+      velD[k] = _v.x; velD[k+1] = _v.y; velD[k+2] = _v.z; velD[k+3] = omur;
+    }
+
+    this.posVar = this.gpu.addVariable('texturePosition', konumShader, dtPos);
+    this.velVar = this.gpu.addVariable('textureVelocity', hizShader, dtVel);
+    this.gpu.setVariableDependencies(this.posVar, [this.posVar, this.velVar]);
+    this.gpu.setVariableDependencies(this.velVar, [this.posVar, this.velVar]);
+
+    Object.assign(this.posVar.material.uniforms, {
+      uDt: { value: 0 }, uTime: { value: 0 },
+      uNozulPos: { value: nozul.clone() }, uNozulYon: { value: _eksen.clone() },
+      uDiskR: { value: diskR }
+    });
+    Object.assign(this.velVar.material.uniforms, {
+      uDt: { value: 0 }, uTime: { value: 0 },
+      uNozulYon: { value: _eksen.clone() }, uKoniAci: { value: koniAci },
+      uHizA: { value: p.speed.a }, uHizB: { value: p.speed.b },
+      uOmurA: { value: p.life.a }, uOmurB: { value: p.life.b },
+      uHizScale: { value: 1.0 }                          // ⭐ timeline sürer
+    });
+
+    const hata = this.gpu.init();
+    if (hata) console.error('GPUComputationRenderer:', hata);
+
+    const aRef = new Float32Array(this.sayi * 2);
+    const aSize = new Float32Array(this.sayi);
+    for (let i = 0; i < this.sayi; i++) {
+      aRef[i*2]   = ((i % W) + 0.5) / W;
+      aRef[i*2+1] = (Math.floor(i / W) + 0.5) / H;
+      aSize[i] = p.size * (0.7 + Math.random() * 0.6);
+    }
+    this.geo = new THREE.BufferGeometry();
+    this.geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.sayi * 3), 3));
+    this.geo.setAttribute('aRef',  new THREE.BufferAttribute(aRef, 2));
+    this.geo.setAttribute('aSize', new THREE.BufferAttribute(aSize, 1));
+
+    this.mat = new THREE.ShaderMaterial({
+      uniforms: katmanUniformlari({
+        uPosTex: { value: null }, uVelTex: { value: null },
+        uDoku: { value: damlaDoku },
+        uRenk: { value: new THREE.Color(p.color) },
+        uAlfa: { value: p.alpha },
+        uAeration: { value: p.aeration },
+        uYumusaklik: { value: preset.yumusaklik }
+      }),
+      vertexShader: renderVertex, fragmentShader: renderFragment,
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+    });
+    this.points = new THREE.Points(this.geo, this.mat);
+    this.points.frustumCulled = false;
+    scene.add(this.points);
+  }
+
+  // --- timeline setter'ları ---
+  setMaster(v) { this.mat.uniforms.uAlfa.value = this.baseAlfa * Math.max(0, v); }
+  setHiz(k)    { this.velVar.material.uniforms.uHizScale.value = Math.max(0, k); }
+
+  step(dt, t) {
+    for (const v of [this.posVar, this.velVar]) {
+      v.material.uniforms.uDt.value = dt;
+      v.material.uniforms.uTime.value = t;
+    }
+    this.gpu.compute();
+    this.mat.uniforms.uPosTex.value = this.gpu.getCurrentRenderTarget(this.posVar).texture;
+    this.mat.uniforms.uVelTex.value = this.gpu.getCurrentRenderTarget(this.velVar).texture;
+  }
+}
+
+// ============================================================
+// BLOK 6 — RENDER SHADER'LARI (Ders 6'dan aynen)
+// ============================================================
+
+const renderVertex = /* glsl */`
+  attribute vec2  aRef;
+  attribute float aSize;
+  uniform sampler2D uPosTex;
+  uniform sampler2D uVelTex;
+  uniform float uPixelYariCap;
+  uniform int   uIsikSayisi;
+  uniform vec3  uIsikPos[4];
+  uniform vec3  uIsikYon[4];
+  uniform float uIsikCosAci[4];
+  uniform vec3  uIsikRenk[4];
+  varying float vVy;
+  varying float vAge;
+  varying float vViewZ;
+  varying vec3  vIsik;
+  void main() {
+    vec4 P = texture2D(uPosTex, aRef);
+    vec4 V = texture2D(uVelTex, aRef);
+    vec3 worldPos = P.xyz;
+    vVy  = V.y;
+    vAge = clamp(P.w / max(V.w, 1e-4), 0.0, 1.0);
+    vIsik = vec3(0.0);
+    for (int i = 0; i < 4; i++) {
+      if (i >= uIsikSayisi) break;
+      vec3 d = worldPos - uIsikPos[i];
+      float dist = length(d);
+      vec3 L = d / max(dist, 1e-4);
+      float inCone = smoothstep(uIsikCosAci[i] - 0.05, uIsikCosAci[i], dot(L, uIsikYon[i]));
+      float att = 1.0 / (1.0 + 0.12 * dist * dist);
+      vIsik += uIsikRenk[i] * inCone * att;
+    }
+    float m = max(vIsik.r, max(vIsik.g, vIsik.b));
+    if (m > 1.0) vIsik /= m;
+    vec4 mvPosition = viewMatrix * vec4(worldPos, 1.0);
+    vViewZ = mvPosition.z;
+    gl_PointSize = aSize * (uPixelYariCap / -mvPosition.z);
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`;
+
+const renderFragment = /* glsl */`
+  uniform sampler2D uDoku;
+  uniform vec3  uRenk;
+  uniform float uAlfa;
+  uniform float uAeration;
+  uniform float uIsikTepki;
+  uniform float uTabanIsik;
+  varying float vVy;
+  varying float vAge;
+  varying float vViewZ;
+  varying vec3  vIsik;
+  ${SOFT_FADE_GLSL}
+  void main() {
+    float doku = texture2D(uDoku, gl_PointCoord).a;
+    if (doku < 0.01) discard;
+    float hizKopuk = 1.0 - smoothstep(0.5, 3.0, abs(vVy));
+    float kopuk = max(uAeration, hizKopuk);
+    vec3 albedo = mix(uRenk, vec3(1.0), kopuk * 0.9);
+    vec3 renk = albedo * (uTabanIsik + vIsik * uIsikTepki);
+    float alfa = uAlfa * doku * mix(1.0, 1.8, kopuk);
+    alfa *= 1.0 - smoothstep(0.75, 1.0, vAge);
+    alfa *= softFade(vViewZ);
+    gl_FragColor = vec4(renk, alfa);
+  }
+`;
+
+// ============================================================
+// BLOK 7 — IŞIKLAR (Ders 6). EKLEMELER: timeline setter'ları.
+//   • setHue(h): otomatik renk döngüsünü EZER (0..1 hue).
+//   • setParlaklik(b): hem SpotLight şiddetini hem parçacık boyama
+//     rengini ölçekler → ışık kısılıp patlar (drop/vurgu).
+// hueOverride null ise Ders 6'daki oto-döngü çalışır (timeline hue
+// kanalı yoksa ışık yine canlı kalır).
+// ============================================================
+
+const ISIK_PRESETLER = {
+  spot_kirmizi: { konum: [-4, 0.3, 3], hedef: [-2, 3, 0], aciDeg: 22, menzil: 14, spotSiddet: 60,
+    hueBasla: 0.00, hizHue: 0.020, doygunluk: 1.0, parlaklik: 0.50 },
+  spot_mavi:    { konum: [4, 0.3, 3], hedef: [2, 3, 0], aciDeg: 26, menzil: 14, spotSiddet: 60,
+    hueBasla: 0.60, hizHue: 0.025, doygunluk: 1.0, parlaklik: 0.50 },
+  spot_yesil:   { konum: [0, 0.3, -4], hedef: [0, 4, 0], aciDeg: 30, menzil: 15, spotSiddet: 50,
+    hueBasla: 0.33, hizHue: 0.018, doygunluk: 0.9, parlaklik: 0.50 }
+};
+
+class IsikSistemi {
+  constructor(preset, index) {
+    this.preset = preset;
+    this.index = index;
+    this.pos   = new THREE.Vector3().fromArray(preset.konum);
+    this.hedef = new THREE.Vector3().fromArray(preset.hedef);
+    this.aciRad = THREE.MathUtils.degToRad(preset.aciDeg);
+    this.renk = new THREE.Color();
+    this._bridge = new THREE.Color();
+    this.yon = new THREE.Vector3().subVectors(this.hedef, this.pos).normalize();
+    this.cosAci = Math.cos(this.aciRad);
+    this.hueOverride = null;    // timeline set etmezse oto-döngü
+    this.parlaklikScale = 1.0;  // timeline "parlaklik" kanalı
+
+    this.spot = new THREE.SpotLight(0xffffff, preset.spotSiddet, preset.menzil,
+                                    this.aciRad, 0.6, 1.2);
+    this.spot.position.copy(this.pos);
+    this.spot.target.position.copy(this.hedef);
+    scene.add(this.spot);
+    scene.add(this.spot.target);
+  }
+  setHue(h) { this.hueOverride = ((h % 1) + 1) % 1; }
+  setParlaklik(b) { this.parlaklikScale = Math.max(0, b); }
+
+  guncelle(t) {
+    const pr = this.preset;
+    let hue;
+    if (this.hueOverride !== null) hue = this.hueOverride;
+    else { hue = (pr.hueBasla + t * pr.hizHue) % 1.0; if (hue < 0) hue += 1.0; }
+    this.renk.setHSL(hue, pr.doygunluk, pr.parlaklik);
+
+    const b = this.parlaklikScale;
+    this.spot.color.copy(this.renk);
+    this.spot.intensity = pr.spotSiddet * b;
+    // parçacık köprüsü: boyama rengi de parlaklıkla ölçeklenir (kısılınca su kararır)
+    this._bridge.copy(this.renk).multiplyScalar(b);
+    ortakUniformlar.uIsikPos.value[this.index].copy(this.pos);
+    ortakUniformlar.uIsikYon.value[this.index].copy(this.yon);
+    ortakUniformlar.uIsikCosAci.value[this.index] = this.cosAci;
+    ortakUniformlar.uIsikRenk.value[this.index].copy(this._bridge);
+  }
+}
+
+// --- Doğuşlar ---
+const cihazlar = {};
+for (const [ad, preset] of Object.entries(PRESETLER)) cihazlar[ad] = new GpuParcaSistemi(preset);
+const isiklar = {};
+let isikIdx = 0;
+for (const [ad, preset] of Object.entries(ISIK_PRESETLER)) isiklar[ad] = new IsikSistemi(preset, isikIdx++);
+ortakUniformlar.uIsikSayisi.value = isikIdx;
+
+const toplamParca = Object.values(cihazlar).reduce((s, c) => s + c.sayi, 0);
+document.getElementById('sayi').textContent = toplamParca.toLocaleString('tr-TR');
+
+// ============================================================
+// BLOK 8 — ⭐ TIMELINE JSON + OYNATICI + KÖPRÜ (dersin kalbi)
+//
+// (A) FORMAT. Şovun tamamı bir nesne:
+//   { sure: <saniye>, kanallar: [ kanal, kanal, ... ] }
+// Bir kanal TEK bir hedef parametreyi zamanla sürer:
+//   { hedef: "duz_jet.hiz", tip: "linear", anahtarlar: [[t,deger],...] }
+//   • hedef : "<cihaz/ışık adı>.<parametre>" — köprü tablosunun anahtarı.
+//   • tip   : "step" (basamak, anlık geçiş) | "linear" (düz ara-değer) |
+//             "smooth" (smoothstep — yumuşak giriş/çıkış).
+//   • anahtarlar: [zaman, değer] çiftleri; zaman saniye, ARTAN sırada.
+// Bu format bilinçli olarak ESA Pro "cue" mantığına yakın ama açık: her
+// satır insan tarafından okunur/yazılır, P3'te müzik-analizi AYNI diziyi
+// üretecek (beat→anahtar). Format = sözleşme; motor ve besteci ona uyar.
+//
+// (B) OYNATICI (Zamanlayici): t anında her kanalı örnekler (komşu iki
+// anahtar arası ara-değer) ve köprüden hedefe yollar. Kanal başına birkaç
+// anahtar olduğundan lineer tarama yeter (ikili aramaya gerek yok).
+//
+// (C) KÖPRÜ (kayit): "hedef" metnini bir setter fonksiyonuna eşler.
+// JSON, motorun iç API'sini bilmez; motor, JSON'u bilmez — ikisi bu
+// tablo üzerinden buluşur. Yeni cihaz/parametre = tabloya bir satır.
+// ============================================================
+
+// (A) Elle yazılmış demo şov — 24 sn, döngüsel. 4 "bölüm":
+//   0-6   giriş: jet yavaş yükselir, kırmızı→turuncu; geyser kapalı.
+//   6-12  yükseliş: jet tam boy + hız nabzı; geyser patlar; maviler döner.
+//   12-18 kırılma (drop): kısa karanlık, sonra üçü birden parlar, hızlı hue.
+//   18-24 final + başa dönüş: yumuşak sönüm, renkler yavaşlar.
+const ZAMAN_CIZELGESI = {
+  sure: 24,
+  kanallar: [
+    // — DÜZ JET —
+    { hedef: 'duz_jet.master', tip: 'smooth', anahtarlar: [
+      [0,0.2],[1.5,1.0],[11,1.0],[12,0.15],[13,1.0],[22,1.0],[24,0.2] ] },
+    { hedef: 'duz_jet.hiz', tip: 'smooth', anahtarlar: [
+      [0,0.55],[3,0.8],[6,1.2],[7.5,0.9],[9,1.2],[10.5,0.9],[12,1.25],[18,1.1],[24,0.6] ] },
+
+    // — GEYSER — (patlamalar step ile keskin)
+    { hedef: 'geyser.master', tip: 'step', anahtarlar: [
+      [0,0],[6,1],[9,0],[10.5,1],[12,0],[13,1],[24,0] ] },
+    { hedef: 'geyser.hiz', tip: 'smooth', anahtarlar: [
+      [6,0.9],[8,1.3],[10.5,1.0],[13,1.35],[18,1.1],[24,0.9] ] },
+
+    // — KIRMIZI PROJEKTÖR — giriş tonu, drop'ta parlar
+    { hedef: 'spot_kirmizi.hue', tip: 'linear', anahtarlar: [
+      [0,0.02],[6,0.08],[12,0.0],[18,0.95],[24,0.02] ] },
+    { hedef: 'spot_kirmizi.parlaklik', tip: 'smooth', anahtarlar: [
+      [0,0.7],[11,0.9],[12,0.1],[13,1.4],[16,1.0],[24,0.7] ] },
+
+    // — MAVİ PROJEKTÖR — yükselişte döner
+    { hedef: 'spot_mavi.hue', tip: 'linear', anahtarlar: [
+      [0,0.6],[6,0.55],[12,0.5],[18,0.7],[24,0.6] ] },
+    { hedef: 'spot_mavi.parlaklik', tip: 'smooth', anahtarlar: [
+      [0,0.5],[6,1.0],[11,1.0],[12,0.1],[13,1.3],[24,0.5] ] },
+
+    // — YEŞİL PROJEKTÖR — arkadan yıkar, finalde güçlenir
+    { hedef: 'spot_yesil.hue', tip: 'linear', anahtarlar: [
+      [0,0.33],[12,0.4],[18,0.28],[24,0.33] ] },
+    { hedef: 'spot_yesil.parlaklik', tip: 'smooth', anahtarlar: [
+      [0,0.4],[6,0.8],[12,0.1],[13,1.2],[18,1.4],[24,0.4] ] }
+  ]
+};
+
+// (B) OYNATICI
+class Zamanlayici {
+  constructor(cizelge, kayit) {
+    this.cizelge = cizelge;
+    this.kayit = kayit;
+    // güvence: her kanalın anahtarları zamana göre sıralı olsun
+    for (const k of cizelge.kanallar) k.anahtarlar.sort((a, b) => a[0] - b[0]);
+    // uyar: köprüde karşılığı olmayan hedef = sessiz ölü kanal → logla
+    for (const k of cizelge.kanallar)
+      if (!kayit[k.hedef]) console.warn('timeline: köprüsüz hedef atlanıyor →', k.hedef);
+  }
+  // Bir kanalın t anındaki değeri (komşu anahtarlar arası ara-değer).
+  ornekle(kanal, t) {
+    const a = kanal.anahtarlar;
+    if (t <= a[0][0]) return a[0][1];
+    const son = a[a.length - 1];
+    if (t >= son[0]) return son[1];
+    for (let i = 0; i < a.length - 1; i++) {
+      const [t0, v0] = a[i], [t1, v1] = a[i + 1];
+      if (t >= t0 && t <= t1) {
+        if (kanal.tip === 'step') return v0;         // basamak: geçişe kadar v0
+        let u = (t - t0) / (t1 - t0);
+        if (kanal.tip === 'smooth') u = u * u * (3 - 2 * u);  // smoothstep
+        return v0 + (v1 - v0) * u;                   // linear / smooth
+      }
+    }
+    return son[1];
+  }
+  // t anında (döngüsel) tüm kanalları hedeflerine uygula.
+  uygula(t) {
+    for (const kanal of this.cizelge.kanallar) {
+      const fn = this.kayit[kanal.hedef];
+      if (fn) fn(this.ornekle(kanal, t));
+    }
+  }
+}
+
+// (C) KÖPRÜ TABLOSU: "hedef" metni → setter. Motorun timeline'a açtığı
+// TEK yüzey. Yeni parametre eklemek = buraya bir satır (JSON motoru bilmez).
+const kayit = {};
+for (const [ad, c] of Object.entries(cihazlar)) {
+  kayit[`${ad}.master`] = v => c.setMaster(v);
+  kayit[`${ad}.hiz`]    = v => c.setHiz(v);
+}
+for (const [ad, l] of Object.entries(isiklar)) {
+  kayit[`${ad}.hue`]       = v => l.setHue(v);
+  kayit[`${ad}.parlaklik`] = v => l.setParlaklik(v);
+}
+const zamanlayici = new Zamanlayici(ZAMAN_CIZELGESI, kayit);
+
+// ============================================================
+// BLOK 9 — DÖNGÜ (Ders 6 + timeline sürüşü) + şov çubuğu
+// Kare planı: showT = simZaman % sure → zamanlayici.uygula(showT)
+//   (cihaz/ışık uniform'larını timeline'a göre AYARLA) → ışık.guncelle
+//   → GPU fizik → derinlik → composer. Timeline EN ÖNCE: bu karenin
+//   parçacığı/ışığı bu karenin şov değerini görsün.
+// ============================================================
+
+const dbBoyut = new THREE.Vector2();
+renderer.getDrawingBufferSize(dbBoyut);
+const depthTarget = new THREE.WebGLRenderTarget(dbBoyut.x, dbBoyut.y, {
+  depthBuffer: true, stencilBuffer: false
+});
+depthTarget.depthTexture = new THREE.DepthTexture(dbBoyut.x, dbBoyut.y);
+depthTarget.depthTexture.format = THREE.DepthFormat;
+depthTarget.depthTexture.type = THREE.UnsignedIntType;
+ortakUniformlar.uDerinlikDoku.value = depthTarget.depthTexture;
+
+const gizlenecekler = Object.values(cihazlar).map(c => c.points);
+function derinlikOnGecisi() {
+  for (const k of gizlenecekler) k.visible = false;
+  renderer.setRenderTarget(depthTarget);
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(null);
+  for (const k of gizlenecekler) k.visible = true;
+}
+function cozunurlukGuncelle() {
+  renderer.getDrawingBufferSize(dbBoyut);
+  depthTarget.setSize(dbBoyut.x, dbBoyut.y);
+  ortakUniformlar.uCozunurluk.value.copy(dbBoyut);
+  ortakUniformlar.uPixelYariCap.value = dbBoyut.y * 0.5;
+}
+cozunurlukGuncelle();
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.7, 0.5, 0.25);
+composer.addPass(bloomPass);
+composer.addPass(new OutputPass());
+
+const clock = new THREE.Clock();
+// Önizleme kancası: URL'e #t=13 eklenince şov o saniyeden başlar (şovun
+// herhangi bir anını tek karede görmek için — editör/debug kolaylığı).
+const _hashT = parseFloat((location.hash.match(/t=([\d.]+)/) || [])[1]);
+let simZaman = Number.isFinite(_hashT) ? _hashT : 0;
+let frames = 0, fpsTimer = 0;
+const fpsEl = document.getElementById('fps');
+const sureEl = document.getElementById('sure');
+const barEl = document.getElementById('bar');
+
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 1 / 20);
+  simZaman += dt;
+  const showT = simZaman % ZAMAN_CIZELGESI.sure;   // döngüsel şov saati
+
+  zamanlayici.uygula(showT);                        // ⭐ timeline sahneyi sürer
+  for (const l of Object.values(isiklar)) l.guncelle(simZaman);   // hue override + köprü
+  for (const c of Object.values(cihazlar)) c.step(dt, simZaman);  // GPU fizik
+  controls.update();
+
+  derinlikOnGecisi();
+  composer.render();
+
+  // şov çubuğu + saat
+  barEl.style.width = (100 * showT / ZAMAN_CIZELGESI.sure) + '%';
+  frames++; fpsTimer += dt;
+  if (fpsTimer >= 0.25) { sureEl.textContent = showT.toFixed(1); }
+  if (fpsTimer >= 1) { fpsEl.textContent = frames; frames = 0; fpsTimer = 0; }
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+  cozunurlukGuncelle();
+});
+
+// Debug kancası. Örn:
+//   DERS7.ZAMAN_CIZELGESI.kanallar[1].anahtarlar    → jet hız anahtarları (canlı düzenle)
+//   DERS7.zamanlayici.ornekle(DERS7.ZAMAN_CIZELGESI.kanallar[0], 6)  → t=6'da master değeri
+//   DERS7.kayit['geyser.master'](1)                 → geyseri elle aç (köprüyü test et)
+window.DERS7 = { cihazlar, isiklar, PRESETLER, ISIK_PRESETLER, ZAMAN_CIZELGESI, zamanlayici, kayit, ortakUniformlar };
+</script>
+</body>
+</html>

@@ -1,0 +1,934 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>Ders 5 — Işık (ışık = üçüncü boyut · RGB projektör)</title>
+<style>
+  body { margin: 0; overflow: hidden; background: #000; }
+  #info {
+    position: fixed; top: 8px; left: 8px;
+    color: #8fd3ff; font: 13px/1.5 Consolas, monospace;
+    text-shadow: 0 1px 2px #000;
+  }
+</style>
+</head>
+<body>
+<div id="info">Ders 5 — ışık &middot; RGB projektörler su cihazlarını boyar &middot; <span id="isikAdlari">-</span> &middot; sol tık: döndür · teker: zoom · <span id="fps">-</span> fps</div>
+
+<!-- importmap: "three" adını CDN'deki gerçek dosyaya eşler.
+     Kurulum yok, npm yok — tarayıcı modülü doğrudan internetten çeker. -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+// ============================================================
+// DERS 5 — IŞIK = ÜÇÜNCÜ BOYUT
+//
+// Ders 2-4'te suyu çizdik: parçacık köpüğü, cam mesh. Ama gündüz
+// çeşmesi ile gece çeşmesi AYNI su iki AYRI gösteridir — farkı yapan
+// tek şey ışık. Gece çeşmesinin bütün büyüsü, renksiz suyun altına/
+// yanına konan RGB projektörlerin o suyu boyamasıdır.
+//
+// Bu dersin tezi (Ders 3'ün "cihaz = veri" tezinin devamı):
+//
+//   IŞIK DA BİR CİHAZDIR. O da PRESET'ten doğar, tek motor onu kurar.
+//
+// Su cihazları CihazSistemi'nden (Ders 3) doğuyor; ışık cihazları
+// IsikSistemi'nden doğacak — aynı veri felsefesi, farklı motor.
+//
+// docs/2026-07-14-cihaz-render-desenleri.md §3 üç parça sayıyor, üçü
+// de bu dersin üç kalbi:
+//   1) VOLUMETRİK HÜZME (BLOK 4): havadaki su zerresine çarpan ışığı
+//      taklit eden additive koni mesh (drei SpotLightMaterial tekniği).
+//   2) GERÇEK SPOTLIGHT (BLOK 5): hüzme mesh SADECE görseldir; suyu ve
+//      zemini GERÇEKTEN boyayan şey ona eşlik eden THREE.SpotLight.
+//   3) PARÇACIK BOYAMASI (BLOK 6): additive su parçacıkları ışık hesabı
+//      yapmaz → ışıktan renk almaları için kendi ~15 satırlık vertex
+//      shader desenimiz (hazır repo yok, docs §3 kendimiz yazarız der).
+//
+// Ders 4 dersini unutma: additive'de alfa = KAZANÇ, mutlak değer
+// değil; parlaklık katman sayısının fonksiyonu, "sahnede ölçülür".
+// Bu dosyadaki bütün ışık şiddetleri/alfaları mütevazı seçildi;
+// nihai denge headless ekran testinde ayarlanacak.
+// ============================================================
+
+// ============================================================
+// BLOK 1 — SAHNE KURULUMU (Ders 3'ten, iki öğretici değişiklikle)
+// Satır satır anlatım Ders 1'de. Ders 5 farkları:
+//   1) AmbientLight KISILDI (0x223344, 0.4): sahne daha karanlık
+//      başlamalı ki ışıkların RENGİ okunsun — aydınlık sahnede RGB
+//      spot beyaza karışır, gece çeşmesi hissi ölür.
+//   2) Sabit mavi PointLight KALDIRILDI: artık sahneyi "ışık cihazları
+//      boyar" diyoruz; sahneyi genel aydınlatan hazır bir lamba varsa
+//      dersin tezi (ışık = cihaz) görünmez olur.
+// ============================================================
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x050810);
+scene.fog = new THREE.Fog(0x050810, 18, 55);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(7, 4, 11);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 2.5, 0);
+controls.enableDamping = true;
+
+// Zemin r=10, MeshStandardMaterial: gerçek SpotLight (BLOK 5) BURAYA
+// düşecek. Standart malzeme ışığa tepki verir → spot ışığın zemindeki
+// havuzunu bu yüzey gösterir. (Additive shader su bunu yapamazdı.)
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(10, 48),
+  new THREE.MeshStandardMaterial({ color: 0x0a1622, roughness: 0.35, metalness: 0.2 })
+);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+
+// KISIK ambient: sahneye can suyu kadar taban aydınlık — geri kalanı
+// ışık cihazlarına bırakılıyor (dersin tezi).
+scene.add(new THREE.AmbientLight(0x223344, 0.4));
+
+const G = 9.81;  // yerçekimi — su motorunun tek fizik sabiti
+
+// ============================================================
+// BLOK 2 — SPRITE DOKU (Ders 3'ten, damlaDoku aynen)
+// Prosedürel doku anlatımı Ders 2 BLOK 2'de.
+// ============================================================
+
+function dokuUret(ciz) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  ciz(c.getContext('2d'), 128);
+  return new THREE.CanvasTexture(c);  // linear kalır: renk değil YOĞUNLUK maskesi
+}
+
+const damlaDoku = dokuUret((ctx, S) => {
+  const g = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  g.addColorStop(0.0,  'rgba(255,255,255,1)');
+  g.addColorStop(0.35, 'rgba(255,255,255,0.75)');
+  g.addColorStop(1.0,  'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, S, S);
+});
+
+// ============================================================
+// BLOK 3 — SU CİHAZLARI (Ders 3 motoru + ışık boyama uzantısı)
+//
+// Ders 3'ün CihazSistemi'ni ve cihaz shader'larını AYNEN taşıyoruz —
+// kesirli emisyon akümülatörü, ölü-slot havuzu, doğum-anı örnekleme,
+// world-space doğum, prewarm. Bu derste SADELEŞTİRME: yelpaze ve robo
+// yok, sadece DÜZ JET (x=-2) ve GEYSER (x=+2) — ışığı iki temiz cihaz
+// üstünde göstermek için yeter (motor kodu 4'e de aynen ölçeklenir).
+//
+// TEK MOTOR FARKI: cihaz fragment/vertex shader'ına ışık boyama eklendi
+// (uniform dizileri + vIsik varying). Tasarımın anlatımı BLOK 6'da;
+// burada sadece uniform köprüsünü (ortakUniformlar'daki ışık dizileri)
+// ve shader satırlarını yerleştiriyoruz.
+// ============================================================
+
+const PRESETLER = {
+
+  // COMET / DÜZ JET — Ders 1-2'nin jeti, artık veri. Konum SOLA (x=-2)
+  // çekildi ki kırmızı projektör önünden onu boyasın.
+  duz_jet: {
+    archetype: 'straight_jet',
+    konum: [-2, 0, 0],
+    shape:    { type: 'point', angle: 0.05 },          // dar koni (~3°)
+    emission: { rate: { type: 'const', value: 1900 } },
+    particle: {
+      speed: { type: 'range', a: 10.0, b: 12.0 },      // m/s → tepe ~6 m
+      life:  { type: 'range', a: 2.0,  b: 2.3  },
+      size:  { type: 'const', value: 0.07 },
+      color: '#bfe3ff',
+      alpha: 0.55,
+      aeration: 0.35    // hafif köpük: beyazlık ağırlıkla hızdan (tepe)
+    }
+  },
+
+  // GEYSER — kalın, opak, kabarcıklı kütle. Ders 3'te headless testle
+  // bulunan ayarlar (alfa 0.2, size 0.11, aeration 0.75) AYNEN KORUNDU:
+  // additive'de kütle doğum oranından, beyazlık aeration'dan gelir,
+  // alfa küçük kalmalı (Ders 3-4 dersi). Konum SAĞA (x=+2).
+  geyser: {
+    archetype: 'geyser',
+    konum: [2, 0, 0],
+    shape:    { type: 'disc', radius: 0.28, angle: 0.22 },  // geniş ağız+koni
+    emission: { rate: { type: 'const', value: 4000 } },
+    particle: {
+      speed: { type: 'range', a: 5.5, b: 7.0 },        // alçak ve tok
+      life:  { type: 'range', a: 1.2, b: 1.5 },
+      size:  { type: 'const', value: 0.11 },
+      color: '#e8f4ff',
+      alpha: 0.2,
+      aeration: 0.75
+    },
+    render: { yumusaklik: 0.5 }
+  }
+};
+
+// ---- 3a. Üreteç yorumlayıcı (Ders 3) --------------------------
+function ornekle(u) {
+  if (u.type === 'const') return u.value;
+  if (u.type === 'range') return u.a + Math.random() * (u.b - u.a);
+  throw new Error('bilinmeyen üreteç tipi: ' + u.type);
+}
+function uretecMax(u) {
+  return u.type === 'const' ? u.value : Math.max(u.a, u.b);
+}
+
+// ---- 3b. Doğum geometrisi yardımcıları (Ders 3) ---------------
+// Modül seviyesi geçici vektörler: her doğumda new açmak GC'yi döver.
+const _wPos  = new THREE.Vector3();     // nozulun dünya konumu
+const _wQuat = new THREE.Quaternion();  // nozulun dünya yönelimi
+const _pozL  = new THREE.Vector3();     // doğum konumu (yerel → dünya)
+const _yonL  = new THREE.Vector3();     // doğum yönü   (yerel → dünya)
+
+// Koni içinde alan-düzgün rastgele yön (yerel uzay, eksen +Y).
+function yonKoni(aciMax, hedef) {
+  const a = Math.random() * Math.PI * 2;          // azimut: düzgün
+  const t = aciMax * Math.sqrt(Math.random());    // kutup: sqrt = alan-düzgün
+  const st = Math.sin(t);
+  hedef.set(Math.sin(a) * st, Math.cos(t), Math.cos(a) * st);
+}
+
+// ---- 3c. Ortak uniform'lar + IŞIK KÖPRÜSÜ ---------------------
+// Ders 3-4'ten: spread ile her su malzemesine AYNI {value} nesnesi
+// gider, tek yerden güncellemek hepsini günceller.
+//
+// YENİ (BLOK 6 köprüsü): ışık cihazlarının canlı durumu burada yaşar.
+// N_ISIK sabit üst sınır; GLSL dizileri [4] ile BİREBİR olmak ZORUNDA
+// (boy uyuşmazlığı sessiz bozulma yaratır — klasik tuzak). IsikSistemi
+// her kare bu dizilere kendi slotunu yazar; su shader'ları okur.
+const N_ISIK = 4;
+const ortakUniformlar = {
+  uDerinlikDoku: { value: null },                // BLOK 8'de dolacak
+  uCozunurluk:   { value: new THREE.Vector2() },
+  uKameraYakin:  { value: camera.near },
+  uKameraUzak:   { value: camera.far },
+  uPixelYariCap: { value: 1 },
+  uTime:         { value: 0 },                    // hüzme dumanının saati (BLOK 4)
+  // --- ışık boyama köprüsü (sabit boy N_ISIK) ---
+  uIsikSayisi: { value: 0 },
+  uIsikPos:    { value: Array.from({ length: N_ISIK }, () => new THREE.Vector3()) },
+  uIsikYon:    { value: Array.from({ length: N_ISIK }, () => new THREE.Vector3(0, 1, 0)) },
+  uIsikCosAci: { value: new Array(N_ISIK).fill(1) },
+  uIsikRenk:   { value: Array.from({ length: N_ISIK }, () => new THREE.Color()) },
+  uIsikTepki:  { value: 1.6 },  // ışığın renk KAZANCI — çarpımsal modelde ~1.5-2.0
+  uTabanIsik:  { value: 0.30 }  // ışıksız taban (ambient): koni dışı su bu kadar görünür
+};
+
+function katmanUniformlari(ozel) {
+  return { ...ortakUniformlar, ...ozel };
+}
+
+// Soft-fade GLSL bloğu (Ders 2 BLOK 4'ten aynen — anlatım orada).
+const SOFT_FADE_GLSL = /* glsl */`
+  #include <packing>
+  uniform sampler2D uDerinlikDoku;
+  uniform vec2  uCozunurluk;
+  uniform float uKameraYakin;
+  uniform float uKameraUzak;
+  uniform float uYumusaklik;
+
+  float softFade(float fragViewZ) {
+    vec2 uv = gl_FragCoord.xy / uCozunurluk;
+    float sahneDerinlik = texture2D(uDerinlikDoku, uv).x;
+    float sahneViewZ = perspectiveDepthToViewZ(sahneDerinlik, uKameraYakin, uKameraUzak);
+    return smoothstep(0.0, uYumusaklik, fragViewZ - sahneViewZ);
+  }
+`;
+
+// ---- 3d. Cihaz shader'ları (Ders 3 + BLOK 6 ışık boyama) -------
+const cihazVertex = /* glsl */`
+  attribute float aSize;   // metre — doğum anında örneklenmiş boy
+  attribute float aVy;     // dikey hız (köpük hilesi)
+  attribute float aAge;    // 0..1 normalize yaş; 1.0 = ÖLÜ slot
+  uniform float uPixelYariCap;
+
+  // BLOK 6 — ışık boyama köprüsü. Dizi boyları JS'teki N_ISIK=4 ile
+  // BİREBİR; uIsikSayisi döngü sınırıdır (kullanılmayan slotlar atlanır).
+  uniform int   uIsikSayisi;
+  uniform vec3  uIsikPos[4];
+  uniform vec3  uIsikYon[4];
+  uniform float uIsikCosAci[4];
+  uniform vec3  uIsikRenk[4];
+
+  varying float vVy;
+  varying float vAge;
+  varying float vViewZ;
+  varying vec3  vIsik;      // bu parçacığın ışıklardan topladığı renk
+
+  void main() {
+    // ÖLÜ-SLOT KLİPLEME (Ders 3): boş slotu clip dışına at, fragment doğmaz.
+    if (aAge >= 1.0) {
+      gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
+      gl_PointSize = 0.0;
+      vVy = 0.0; vAge = 1.0; vViewZ = 0.0; vIsik = vec3(0.0);
+      return;
+    }
+    vVy = aVy;
+    vAge = aAge;
+
+    // IŞIK BOYAMASI — parçacık BAŞINA bir kez (vertex), fragment'ta DEĞİL
+    // (maliyet: binlerce parçacık × piksel değil, sadece × parçacık).
+    // worldPos: parçacıklar Ders 3'te DÜNYA uzayında doğuyor → modelMatrix
+    // birim matris; yine de doğrusu/taşınabilirliği için modelMatrix*position.
+    vec3 worldPos = (modelMatrix * vec4(position, 1.0)).xyz;
+    vIsik = vec3(0.0);
+    for (int i = 0; i < 4; i++) {
+      if (i >= uIsikSayisi) break;                 // kullanılmayan slotları atla
+      vec3 d = worldPos - uIsikPos[i];
+      float dist = length(d);
+      vec3 L = d / max(dist, 1e-4);                // ışıktan parçacığa yön
+      // koni içi mi? ışık yönü ile L ne kadar hizalı (cos açı eşiği)
+      float inCone = smoothstep(uIsikCosAci[i] - 0.05, uIsikCosAci[i], dot(L, uIsikYon[i]));
+      float att = 1.0 / (1.0 + 0.12 * dist * dist);   // uzaklıkla ters-kare-benzeri sönüm
+      vIsik += uIsikRenk[i] * inCone * att;
+    }
+    // HSV-V doygunluk hilesi (docs §3): iki-üç ışık üst üste binince toplam
+    // beyaza patlar ve rengi kaybeder. En büyük bileşeni 1'e indirip hepsini
+    // aynı oranda bölersek DEĞER sınırlanır ama HUE/DOYGUNLUK korunur.
+    float m = max(vIsik.r, max(vIsik.g, vIsik.b));
+    if (m > 1.0) vIsik /= m;
+
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    vViewZ = mvPosition.z;
+    gl_PointSize = aSize * (uPixelYariCap / -mvPosition.z);  // el yapımı attenuation (Ders 2)
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`;
+
+const cihazFragment = /* glsl */`
+  uniform sampler2D uDoku;
+  uniform vec3  uRenk;
+  uniform float uAlfa;
+  uniform float uAeration;   // 0..1 yapısal köpük (preset'ten)
+  uniform float uIsikTepki;  // BLOK 6: ışığın renk kazancı (çarpımsal)
+  uniform float uTabanIsik;  // BLOK 6: ışıksız taban aydınlık
+  varying float vVy;
+  varying float vAge;
+  varying float vViewZ;
+  varying vec3  vIsik;
+  ${SOFT_FADE_GLSL}
+
+  void main() {
+    float doku = texture2D(uDoku, gl_PointCoord).a;
+    if (doku < 0.01) discard;
+
+    // KÖPÜK KOMPOZİSYONU (Ders 2-3): hız köpüğü ile yapısal köpüğün max'ı.
+    float hizKopuk = 1.0 - smoothstep(0.5, 3.0, abs(vVy));
+    float kopuk = max(uAeration, hizKopuk);
+    vec3 albedo = mix(uRenk, vec3(1.0), kopuk * 0.9);   // suyun kendi rengi (beyaza kayan)
+
+    // ⭐ DERSİN KALBİ: su renkli ışığı ÇARPIMSAL alır (yansıma modeli).
+    // İlk deneme ADDITIVE idi (renk += vIsik) — beyaz köpüğün üstüne renk
+    // EKLEMEK onu renklendirmiyor, sadece parlatıp beyaza doyuruyordu
+    // (headless testte geyser beyaz top oldu). Doğrusu: beyaz köpük ×
+    // kırmızı ışık = KIRMIZI köpük. gerçek çeşmenin sırrı bu:
+    //   görünen = albedo · (tabanIşık + Σ ışıkRengi)
+    // Yan fayda: ışık konisi DIŞINDAKİ su kararır (uTabanIsik kadar) —
+    // gerçek gece çeşmesinde de spot değmeyen su görünmez. İki-üç ışık
+    // üst üste binince renkleri toplanıp beyaza döner (additive ışık, doğru).
+    vec3 renk = albedo * (uTabanIsik + vIsik * uIsikTepki);
+
+    float alfa = uAlfa * doku * mix(1.0, 1.8, kopuk);   // köpük daha yoğun
+    alfa *= 1.0 - smoothstep(0.75, 1.0, vAge);          // yaş sönümü (Ders 3)
+    alfa *= softFade(vViewZ);                           // zemine yaklaşan piksel erir (Ders 2)
+    gl_FragColor = vec4(renk, alfa);
+  }
+`;
+
+// ---- 3e. CihazSistemi (Ders 3'ten, kinematik/fan sadeleştirildi) --
+class CihazSistemi {
+  constructor(preset) {
+    this.preset = preset;
+
+    // Rig zinciri (Ders 3): base → panPivot → tiltPivot → nozul. Bu derste
+    // kinematik yok, zincir STATİK kalır — ama doğum yine nozulun dünya
+    // duruşundan okunuyor, o yüzden scaffold korundu (motor tek tip).
+    this.base      = new THREE.Object3D();
+    this.panPivot  = new THREE.Object3D();
+    this.tiltPivot = new THREE.Object3D();
+    this.nozul     = new THREE.Object3D();
+    this.base.add(this.panPivot);
+    this.panPivot.add(this.tiltPivot);
+    this.tiltPivot.add(this.nozul);
+    this.base.position.fromArray(preset.konum);
+    scene.add(this.base);
+
+    // Kapasite = rate × maks ömür × %10 pay (Ders 3).
+    const maxRate = uretecMax(preset.emission.rate);
+    const maxLife = uretecMax(preset.particle.life);
+    this.kapasite = Math.ceil(maxRate * maxLife * 1.1);
+    const K = this.kapasite;
+
+    // CPU tarafı diziler
+    this.pos   = new Float32Array(K * 3);
+    this.vel   = new Float32Array(K * 3);
+    this.yas   = new Float32Array(K);
+    this.omur  = new Float32Array(K);
+    this.canli = new Uint8Array(K);
+
+    // GPU attribute dizileri
+    this.aSize = new Float32Array(K);
+    this.aVy   = new Float32Array(K);
+    this.aAge  = new Float32Array(K).fill(1);   // herkes ölü başlar
+
+    // Ölü-slot yığını
+    this.bosYigin = new Int32Array(K);
+    for (let i = 0; i < K; i++) this.bosYigin[i] = i;
+    this.bosSayisi = K;
+    this.bekleyen = 0;
+
+    // Geometri + malzeme
+    this.geo = new THREE.BufferGeometry();
+    this.geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3));
+    this.geo.setAttribute('aSize', new THREE.BufferAttribute(this.aSize, 1));
+    this.geo.setAttribute('aVy', new THREE.BufferAttribute(this.aVy, 1));
+    this.geo.setAttribute('aAge', new THREE.BufferAttribute(this.aAge, 1));
+    for (const ad of ['position', 'aSize', 'aVy', 'aAge']) {
+      this.geo.attributes[ad].setUsage(THREE.DynamicDrawUsage);
+    }
+
+    const p = preset.particle;
+    this.mat = new THREE.ShaderMaterial({
+      uniforms: katmanUniformlari({
+        uDoku:       { value: damlaDoku },
+        uRenk:       { value: new THREE.Color(p.color) },
+        uAlfa:       { value: p.alpha },
+        uAeration:   { value: p.aeration },
+        uYumusaklik: { value: (preset.render && preset.render.yumusaklik) || 0.4 }
+      }),
+      vertexShader: cihazVertex,
+      fragmentShader: cihazFragment,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
+
+    this.points = new THREE.Points(this.geo, this.mat);
+    this.points.frustumCulled = false;   // dinamik konumlar — Ders 3 cull tuzağı
+    scene.add(this.points);
+  }
+
+  dogur(i) {
+    const p = this.preset.particle;
+    const s = this.preset.shape;
+
+    const hiz  = ornekle(p.speed);
+    this.omur[i] = ornekle(p.life);
+    this.aSize[i] = ornekle(p.size) * (0.7 + Math.random() * 0.6);
+
+    _pozL.set(0, 0, 0);
+    if (s.type === 'point') {
+      yonKoni(s.angle, _yonL);
+    } else if (s.type === 'disc') {
+      const a = Math.random() * Math.PI * 2;
+      const r = s.radius * Math.sqrt(Math.random());
+      _pozL.set(Math.cos(a) * r, 0, Math.sin(a) * r);
+      yonKoni(s.angle, _yonL);
+    } else {
+      // fan/vb. bu derste yok (sadeleştirme) — yeni tip gelirse buraya dal.
+      throw new Error('bilinmeyen shape tipi: ' + s.type);
+    }
+
+    // Yerel → DÜNYA (Ders 3): parçacıklar dünya uzayında yaşar.
+    _pozL.applyQuaternion(_wQuat).add(_wPos);
+    _yonL.applyQuaternion(_wQuat);
+
+    this.pos[i * 3 + 0] = _pozL.x;
+    this.pos[i * 3 + 1] = _pozL.y;
+    this.pos[i * 3 + 2] = _pozL.z;
+    this.vel[i * 3 + 0] = _yonL.x * hiz;
+    this.vel[i * 3 + 1] = _yonL.y * hiz;
+    this.vel[i * 3 + 2] = _yonL.z * hiz;
+
+    this.yas[i] = 0;
+    this.canli[i] = 1;
+    this.aAge[i] = 0;
+    this.aVy[i] = this.vel[i * 3 + 1];
+  }
+
+  step(dt) {
+    // 1) KESİRLİ EMİSYON AKÜMÜLATÖRÜ (Ders 3)
+    const rate = ornekle(this.preset.emission.rate);
+    this.bekleyen += rate * dt;
+    let dogacak = Math.floor(this.bekleyen);
+    this.bekleyen -= dogacak;
+
+    if (dogacak > 0) {
+      this.nozul.getWorldPosition(_wPos);
+      this.nozul.getWorldQuaternion(_wQuat);
+      while (dogacak-- > 0 && this.bosSayisi > 0) {
+        this.dogur(this.bosYigin[--this.bosSayisi]);
+      }
+      this.geo.attributes.aSize.needsUpdate = true;
+    }
+
+    // 2) FİZİK + ÖLÜM (Ders 3)
+    const K = this.kapasite;
+    const pos = this.pos, vel = this.vel, yas = this.yas, omur = this.omur;
+    for (let i = 0; i < K; i++) {
+      if (!this.canli[i]) continue;
+      vel[i * 3 + 1] -= G * dt;
+      pos[i * 3 + 0] += vel[i * 3 + 0] * dt;
+      pos[i * 3 + 1] += vel[i * 3 + 1] * dt;
+      pos[i * 3 + 2] += vel[i * 3 + 2] * dt;
+      yas[i] += dt;
+      if (yas[i] >= omur[i] || pos[i * 3 + 1] < 0) {
+        this.canli[i] = 0;
+        this.aAge[i] = 1;
+        this.bosYigin[this.bosSayisi++] = i;
+      } else {
+        this.aAge[i] = yas[i] / omur[i];
+        this.aVy[i] = vel[i * 3 + 1];
+      }
+    }
+
+    this.geo.attributes.position.needsUpdate = true;
+    this.geo.attributes.aVy.needsUpdate = true;
+    this.geo.attributes.aAge.needsUpdate = true;
+  }
+
+  prewarm(sure = 2.5) {
+    const h = 1 / 60;
+    for (let t = 0; t < sure; t += h) this.step(h);
+  }
+}
+
+// ============================================================
+// BLOK 4 — VOLUMETRİK HÜZME (dersin kalbi #1)
+//
+// Öğretici gerçek: bir ışık ışını HAVADA GÖRÜNMEZ. Sinemadaki/gece
+// çeşmesindeki o parlak koniyi gördüğümüz şey, havadaki su zerresine/
+// toza çarpıp saçılan ışıktır. Vakumda spot ışığı görünmez; çeşme
+// zaten havaya su püskürttüğü için hüzme muhteşem görünür. Bunu taklit
+// etmenin ucuz yolu: additive, yarı saydam bir KONİ MESH'i.
+//
+// Reçete: drei SpotLightMaterial (MIT — teknik alındı, kod kopya değil;
+// docs §5). ShaderMaterial'li koni + mesafe/açı falloff + hüzme içi
+// akan duman (Ashima/stegu simplex, MIT).
+//
+// Geometri: CylinderGeometry(üst dar 0.08, alt=açı·yariCarpani, boy,
+// 32, 20, açık uçlu). translate ile üst uç origine, rotateX(-90°) ile
+// koni +Z'ye baksın → mesh.lookAt(hedef) koniyi hedefe çevirir.
+// (Object3D.lookAt yerel +Z'yi hedefe döndürür; koni +Z'ye açıldığı
+// için hüzme tam hedefe doğru genişler.)
+// ============================================================
+
+// --- Ashima/stegu 3D simplex noise ---
+// kaynak: Ashima Arts / Ian McEwan, stegu "webgl-noise" (MIT).
+// Hüzme içi akan atmosferik duman için düşük genlikli gürültü.
+const SIMPLEX_GLSL = /* glsl */`
+  vec3 mod289(vec3 x){ return x - floor(x * (1.0 / 289.0)) * 289.0; }
+  vec4 mod289(vec4 x){ return x - floor(x * (1.0 / 289.0)) * 289.0; }
+  vec4 permute(vec4 x){ return mod289(((x * 34.0) + 1.0) * x); }
+  vec4 taylorInvSqrt(vec4 r){ return 1.79284291400159 - 0.85373472095314 * r; }
+
+  float snoise(vec3 v){
+    const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+    const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+    // ilk köşe
+    vec3 i  = floor(v + dot(v, C.yyy));
+    vec3 x0 = v - i + dot(i, C.xxx);
+    // diğer köşeler
+    vec3 g  = step(x0.yzx, x0.xyz);
+    vec3 l  = 1.0 - g;
+    vec3 i1 = min(g.xyz, l.zxy);
+    vec3 i2 = max(g.xyz, l.zxy);
+    vec3 x1 = x0 - i1 + C.xxx;
+    vec3 x2 = x0 - i2 + C.yyy;
+    vec3 x3 = x0 - D.yyy;
+    // permütasyonlar
+    i = mod289(i);
+    vec4 p = permute( permute( permute(
+               i.z + vec4(0.0, i1.z, i2.z, 1.0))
+             + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+             + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+    // gradyanlar
+    float n_ = 0.142857142857;
+    vec3 ns = n_ * D.wyz - D.xzx;
+    vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+    vec4 x_ = floor(j * ns.z);
+    vec4 y_ = floor(j - 7.0 * x_);
+    vec4 x = x_ * ns.x + ns.yyyy;
+    vec4 y = y_ * ns.x + ns.yyyy;
+    vec4 h = 1.0 - abs(x) - abs(y);
+    vec4 b0 = vec4(x.xy, y.xy);
+    vec4 b1 = vec4(x.zw, y.zw);
+    vec4 s0 = floor(b0) * 2.0 + 1.0;
+    vec4 s1 = floor(b1) * 2.0 + 1.0;
+    vec4 sh = -step(h, vec4(0.0));
+    vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+    vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
+    vec3 p0 = vec3(a0.xy, h.x);
+    vec3 p1 = vec3(a0.zw, h.y);
+    vec3 p2 = vec3(a1.xy, h.z);
+    vec3 p3 = vec3(a1.zw, h.w);
+    // normalize
+    vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
+    p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+    // karışım
+    vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+    m = m * m;
+    return 42.0 * dot(m * m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+  }
+`;
+
+const huzmeVertex = /* glsl */`
+  uniform vec3  uTepe;      // hüzmenin tepesi = ışık kaynağının dünya konumu
+  uniform float uMenzil;    // Chapman falloff menzili (m)
+  varying vec3  vWorld;
+  varying vec3  vNormalView; // kamera-uzayı normal (koni kenarı yumuşatma için)
+  varying float vIntensity;
+
+  void main() {
+    vec4 wp = modelMatrix * vec4(position, 1.0);
+    vWorld = wp.xyz;
+    vNormalView = normalize(normalMatrix * normal);
+    // Chapman falloff: tepeye (kaynağa) yakın parlak, menzil ucunda sönük.
+    vIntensity = 1.0 - clamp(distance(wp.xyz, uTepe) / uMenzil, 0.0, 1.0);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const huzmeFragment = /* glsl */`
+  uniform vec3  uRenk;
+  uniform float uAcguc;     // koni kenarı yumuşama üssü (fresnel-benzeri)
+  uniform float uYogunluk;  // hüzmenin toplam kazancı (additive — küçük kalmalı)
+  uniform float uSisOlcek;  // duman gürültüsünün uzamsal ölçeği
+  uniform float uTime;
+  varying vec3  vWorld;
+  varying vec3  vNormalView;
+  varying float vIntensity;
+  ${SIMPLEX_GLSL}
+
+  void main() {
+    // KONİ KENARI YUMUŞATMA: kameraya dönük yüz (normal·+Z ≈ 1) parlak,
+    // silüet kenarı (normal ⟂ görüş) sönük → koni katı disk değil, kabarık
+    // ışık hacmi okunur. (drei SpotLightMaterial'in fresnel-benzeri terimi.)
+    float kenar = pow(clamp(dot(normalize(vNormalView), vec3(0.0, 0.0, 1.0)), 0.0, 1.0), uAcguc);
+
+    // HÜZME İÇİ AKAN DUMAN: dünya konumundan örneklenen simplex, zamanla
+    // yukarı/hafif yana kayar → havadaki toz/su zerresinin canlı hissi.
+    // Düşük genlik (0.6–1.0 arası çarpan): atmosfer, gürültü değil.
+    float sis = 0.5 + 0.5 * snoise(vWorld * uSisOlcek + vec3(0.0, -uTime * 0.35, uTime * 0.12));
+
+    float yog = kenar * vIntensity * uYogunluk * mix(0.6, 1.0, sis);
+    // Additive (SrcAlpha,One): ekrana katkı = uRenk * yog. rgb'yi renk,
+    // alfayı yoğunluk yaparak temiz tutuyoruz.
+    gl_FragColor = vec4(uRenk, yog);
+  }
+`;
+
+// ============================================================
+// BLOK 5 — GERÇEK SPOTLIGHT ÇİFTİ (dersin kalbi #2)
+//
+// docs §3 (ASLS fikri, kod değil): hüzme mesh SADECE görseldir — havayı
+// boyar ama hiçbir YÜZEYİ aydınlatmaz (o bir shader hilesi, gerçek ışık
+// değil). Suyu (parçacık, BLOK 6) ve ZEMİNİ gerçekten boyayan şey, her
+// hüzmeye eşlik eden bir THREE.SpotLight'tır.
+//
+//   TEK CİHAZ, İKİ SİSTEM:
+//     • hüzme mesh  → HAVAYI aydınlatır (additive koni, sahte ama şart)
+//     • SpotLight   → YÜZEYLERİ aydınlatır (zemin MeshStandardMaterial'i)
+//   İkisi aynı konum/hedef/renk/açıdan türer ve her kare SENKRON tutulur
+//   (IsikSistemi.guncelle). Renk preset'ten döndüğü için ikisi hep aynı
+//   rengi gösterir — kullanıcı "tek ışık" görür, motor iki şey sürer.
+//
+// three r166 SpotLight klasik tuzağı: .target sahneye EKLENMELİ ve
+// konumu set edilmeli, yoksa hedef (0,0,0)'da kalır. IsikSistemi ikisini
+// de yapar. penumbra 0.6 (yumuşak kenar), decay 1.2 (fiziksel sönüm).
+//
+// (Somut kurulum BLOK 7'de IsikSistemi içinde — mesh ve SpotLight tek
+// yerde, tek preset'ten doğsun diye.)
+// ============================================================
+
+// ============================================================
+// BLOK 6 — PARÇACIK IŞIK BOYAMASI (dersin kalbi #3)
+//
+// Su parçacıkları additive ShaderMaterial'dır ve HİÇ ışık hesabı yapmaz
+// (Ders 3'te renk hep uRenk'ti). Gece çeşmesinde suyun renklenmesi için
+// kendi desenimiz gerekti (docs §3: hazır repo yok, ~15 satır kendimiz).
+//
+// Mimari, yukarıda BLOK 3'te zaten yerleşti:
+//   • Uniform köprüsü (ortakUniformlar): uIsikSayisi + uIsikPos/Yon/
+//     CosAci/Renk[4] — her kare IsikSistemi JS'ten günceller.
+//   • VERTEX shader (cihazVertex): parçacık başına 1 kez her ışık için
+//     inCone × att hesaplanır, vIsik'e toplanır (fragment başına DEĞİL —
+//     maliyet). HSV-V hilesiyle beyaza patlama sınırlanır.
+//   • FRAGMENT shader (cihazFragment): renk += vIsik * uIsikTepki.
+//
+// Neden vertex? Parçacık ekranda ~birkaç piksel; ışık hesabını fragment'a
+// koysak aynı sonucu 10-50 kat pahalıya alırdık. Nokta sprite için vertex
+// tam çözünürlük. (Büyük mesh'te tersi doğru olurdu — orada per-fragment.)
+// ============================================================
+
+// ============================================================
+// BLOK 7 — IŞIK PRESET'LERİ + IsikSistemi (dersin tezi)
+//
+// Işık de cihaz → o da VERİ. Aşağıdaki ISIK_PRESETLER, PRESETLER ile
+// aynı ruhta elle yazılmış JSON; IsikSistemi tek motor gibi hepsini kurar.
+//
+// RENK DÖNGÜSÜ: her ışığın rengi HSV hue'da yavaş döner (hizHue döngü/sn +
+// hueBasla ofset). Sahne sürekli renk değiştirir → gece çeşmesinin canlılığı.
+// İsimler (kirmizi/mavi/yesil) sadece BAŞLANGIÇ tonudur; hue döndüğü için
+// renkler zamanla birbirine karışır.
+// ============================================================
+
+const ISIK_PRESETLER = {
+
+  // Kırmızı projektör — havuzun önünden düz jeti (x=-2) boyar.
+  spot_kirmizi: {
+    konum: [-4, 0.3, 3], hedef: [-2, 3, 0],
+    aciDeg: 22, menzil: 14, huzmeYariCarpani: 4,
+    huzmeYogunluk: 0.18, acGuc: 3.0, sisOlcek: 0.40,
+    spotSiddet: 60,
+    hueBasla: 0.00, hizHue: 0.020, doygunluk: 1.0, parlaklik: 0.50
+  },
+
+  // Mavi projektör — önden geyseri (x=+2) boyar, biraz daha geniş açı.
+  spot_mavi: {
+    konum: [4, 0.3, 3], hedef: [2, 3, 0],
+    aciDeg: 26, menzil: 14, huzmeYariCarpani: 4,
+    huzmeYogunluk: 0.18, acGuc: 3.0, sisOlcek: 0.40,
+    spotSiddet: 60,
+    hueBasla: 0.60, hizHue: 0.025, doygunluk: 1.0, parlaklik: 0.50
+  },
+
+  // Yeşil projektör — ARKADAN, geniş açı: iki cihazı da arkadan yıkar,
+  // hüzmeler kamera yönüne doğru açıldığından derinlik/silüet hissi verir.
+  spot_yesil: {
+    konum: [0, 0.3, -4], hedef: [0, 4, 0],
+    aciDeg: 30, menzil: 15, huzmeYariCarpani: 4.5,
+    huzmeYogunluk: 0.15, acGuc: 2.5, sisOlcek: 0.35,
+    spotSiddet: 50,
+    hueBasla: 0.33, hizHue: 0.018, doygunluk: 0.9, parlaklik: 0.50
+  }
+};
+
+class IsikSistemi {
+  // index: ortakUniformlar ışık dizilerindeki slot (0..N_ISIK-1).
+  constructor(preset, index) {
+    this.preset = preset;
+    this.index = index;
+
+    this.pos   = new THREE.Vector3().fromArray(preset.konum);
+    this.hedef = new THREE.Vector3().fromArray(preset.hedef);
+    this.aciRad = THREE.MathUtils.degToRad(preset.aciDeg);
+    this.renk = new THREE.Color();
+
+    // Işık yönü (kaynak→hedef) ve koni cos eşiği — parçacık köprüsü bunları
+    // kullanır. Statik (preset'ten türer), bir kez hesaplanır.
+    this.yon = new THREE.Vector3().subVectors(this.hedef, this.pos).normalize();
+    this.cosAci = Math.cos(this.aciRad);
+
+    // --- HÜZME MESH (BLOK 4) ---
+    const boy = preset.menzil;
+    const rAlt = this.aciRad * preset.huzmeYariCarpani;   // alt yarıçap = açı·çarpan
+    const geo = new THREE.CylinderGeometry(0.08, rAlt, boy, 32, 20, true);
+    geo.translate(0, -boy / 2, 0);   // üst dar uç origine
+    geo.rotateX(-Math.PI / 2);       // koni +Z'ye baksın (lookAt +Z'yi döndürür)
+    this.huzmeMat = new THREE.ShaderMaterial({
+      uniforms: {
+        uRenk:     { value: new THREE.Color(1, 1, 1) },
+        uTepe:     { value: this.pos.clone() },   // Chapman tepe = kaynak
+        uMenzil:   { value: preset.menzil },
+        uAcguc:    { value: preset.acGuc },
+        uYogunluk: { value: preset.huzmeYogunluk },
+        uSisOlcek: { value: preset.sisOlcek },
+        uTime:     ortakUniformlar.uTime          // AYNI saat nesnesi paylaşılır
+      },
+      vertexShader: huzmeVertex,
+      fragmentShader: huzmeFragment,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false           // hüzme ışık dilidir, tone map'e girmesin
+    });
+    this.huzme = new THREE.Mesh(geo, this.huzmeMat);
+    this.huzme.position.copy(this.pos);
+    this.huzme.lookAt(this.hedef);   // yerel +Z hedefe → koni hedefe açılır
+    scene.add(this.huzme);
+
+    // --- GERÇEK SPOTLIGHT (BLOK 5) ---
+    // SpotLight(color, intensity, distance, angle, penumbra, decay)
+    this.spot = new THREE.SpotLight(0xffffff, preset.spotSiddet, preset.menzil,
+                                    this.aciRad, 0.6, 1.2);
+    this.spot.position.copy(this.pos);
+    this.spot.target.position.copy(this.hedef);   // hedef konumu ŞART
+    scene.add(this.spot);
+    scene.add(this.spot.target);                  // target sahneye EKLENMELİ (r166 tuzağı)
+  }
+
+  // Her kare: renk döngüsü + hüzme/spotlight/parçacık-uniform senkronu.
+  guncelle(t) {
+    const pr = this.preset;
+    let hue = (pr.hueBasla + t * pr.hizHue) % 1.0;
+    if (hue < 0) hue += 1.0;
+    // parlaklik (HSL lightness) ~0.5: 1'e yaklaşırsa renk beyaza doyar,
+    // 0'a yaklaşırsa söner — doygun renk için orta bölge (Ders 4 dersi).
+    this.renk.setHSL(hue, pr.doygunluk, pr.parlaklik);
+
+    // 1) hüzme mesh rengi
+    this.huzmeMat.uniforms.uRenk.value.copy(this.renk);
+    // 2) gerçek SpotLight rengi (zemini boyar)
+    this.spot.color.copy(this.renk);
+    // 3) PARÇACIK KÖPRÜSÜ: bu ışığın durumunu ortak dizilere yaz (BLOK 6).
+    ortakUniformlar.uIsikPos.value[this.index].copy(this.pos);
+    ortakUniformlar.uIsikYon.value[this.index].copy(this.yon);
+    ortakUniformlar.uIsikCosAci.value[this.index] = this.cosAci;
+    ortakUniformlar.uIsikRenk.value[this.index].copy(this.renk);
+  }
+}
+
+// --- Cihazların doğuşu: veri → motor (Ders 3 tezi) ---
+const cihazlar = {};
+for (const [ad, preset] of Object.entries(PRESETLER)) {
+  cihazlar[ad] = new CihazSistemi(preset);
+}
+
+// --- Işıkların doğuşu: veri → motor (Ders 5 tezi) ---
+const isiklar = {};
+let isikIdx = 0;
+for (const [ad, preset] of Object.entries(ISIK_PRESETLER)) {
+  isiklar[ad] = new IsikSistemi(preset, isikIdx++);
+}
+ortakUniformlar.uIsikSayisi.value = isikIdx;   // GLSL döngü sınırı = gerçek ışık sayısı
+
+// Prewarm öncesi tüm dünya matrislerini tazele, sonra su cihazlarını
+// ön-ısıt (sahne ilk kareden dolu açılır — Ders 3 BLOK 4).
+scene.updateMatrixWorld(true);
+for (const c of Object.values(cihazlar)) c.prewarm(2.5);
+
+// ============================================================
+// BLOK 8 — SOFT PARTICLES + BLOOM + DÖNGÜ (Ders 3-4'ten)
+// Depth prepass + DepthTexture anlatımı Ders 2 BLOK 4/6'da. Bu derste
+// prepass'te GİZLENENLER: su cihazlarının Points'leri + HÜZME MESH'leri.
+// Neden hüzme de gizlenir? Hüzme yarı saydam/additive → derinlik
+// fotoğrafına girmemeli; girse parçacıklar hüzmeye karşı fade olurdu.
+// ZEMİN fotoğrafta KALIR: su ve serpinti ona karşı yumuşakça erisin,
+// hem de SpotLight'ın zemindeki havuzu asıl kareye düşsün.
+// ============================================================
+
+const dbBoyut = new THREE.Vector2();
+renderer.getDrawingBufferSize(dbBoyut);
+const depthTarget = new THREE.WebGLRenderTarget(dbBoyut.x, dbBoyut.y, {
+  depthBuffer: true,
+  stencilBuffer: false
+});
+depthTarget.depthTexture = new THREE.DepthTexture(dbBoyut.x, dbBoyut.y);
+depthTarget.depthTexture.format = THREE.DepthFormat;
+depthTarget.depthTexture.type = THREE.UnsignedIntType;
+
+ortakUniformlar.uDerinlikDoku.value = depthTarget.depthTexture;
+
+// Gizlenecekler: su Points'leri + hüzme mesh'leri (SpotLight'lar zaten
+// derinlik yazmaz; zemin fotoğrafta kalır).
+const gizlenecekler = [
+  ...Object.values(cihazlar).map(c => c.points),
+  ...Object.values(isiklar).map(l => l.huzme)
+];
+
+function derinlikOnGecisi() {
+  for (const k of gizlenecekler) k.visible = false;
+  renderer.setRenderTarget(depthTarget);
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(null);
+  for (const k of gizlenecekler) k.visible = true;
+}
+
+function cozunurlukGuncelle() {
+  renderer.getDrawingBufferSize(dbBoyut);
+  depthTarget.setSize(dbBoyut.x, dbBoyut.y);
+  ortakUniformlar.uCozunurluk.value.copy(dbBoyut);
+  ortakUniformlar.uPixelYariCap.value = dbBoyut.y * 0.5;
+}
+cozunurlukGuncelle();
+
+// Bloom zinciri (Ders 2-4). Eşik hafif YUKARI (0.25): sahne artık renkli
+// spotlarla dolu, düşük eşikte renk havuzları da bloom'a girip beyaza
+// patlardı. threshold biraz yukarı → sadece asıl parlak su/kenar patlar.
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloomPass = new UnrealBloomPass(
+  new THREE.Vector2(innerWidth, innerHeight),
+  0.7,   // strength
+  0.5,   // radius
+  0.25   // threshold — renk patlamasın diye hafif yukarı
+);
+composer.addPass(bloomPass);
+composer.addPass(new OutputPass());  // tone mapping + linear→sRGB (Ders 2)
+
+// --- Render döngüsü ---
+// Kare planı (sıra önemli): dt → uTime → IŞIKLARI güncelle (renk döngüsü
+// + parçacık uniform köprüsü) → su cihazlarını adımla → derinlik ön-geçişi
+// → composer → fps. Işık güncellemesi cihaz step'inden ÖNCE: bu karenin
+// parçacıkları bu karenin ışık rengini/konumunu görsün.
+const clock = new THREE.Clock();
+let simZaman = 0;
+let frames = 0, fpsTimer = 0;
+const fpsEl = document.getElementById('fps');
+document.getElementById('isikAdlari').textContent = Object.keys(isiklar).join(' · ');
+
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 1 / 20);  // dev dt sıçramasını kırp (Ders 1)
+  simZaman += dt;
+  ortakUniformlar.uTime.value = simZaman;          // hüzme dumanının saati
+
+  for (const l of Object.values(isiklar)) l.guncelle(simZaman);  // renk + köprü
+  for (const c of Object.values(cihazlar)) c.step(dt);
+  controls.update();
+
+  derinlikOnGecisi();   // 1) su+hüzme'siz sahnenin derinlik fotoğrafı
+  composer.render();    // 2) asıl kare: sahne → bloom → sRGB çıktı
+
+  frames++; fpsTimer += dt;
+  if (fpsTimer >= 1) { fpsEl.textContent = frames; frames = 0; fpsTimer = 0; }
+});
+
+// Resize zinciri (Ders 2'den): composer + derinlik hedefi + uniform'lar.
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+  cozunurlukGuncelle();
+});
+
+// Debug kancası: konsoldan canlı dürtme.
+// Örn: DERS5.isiklar.spot_kirmizi.spot.intensity = 120        → zemin havuzunu güçlendir
+//      DERS5.isiklar.spot_mavi.huzmeMat.uniforms.uYogunluk.value = 0.4  → hüzmeyi kalınlaştır
+//      DERS5.ortakUniformlar.uIsikTepki.value = 2.5             → suyun renk alışını artır (çarpımsal kazanç)
+//      DERS5.ortakUniformlar.uTabanIsik.value = 0.0             → ışıksız suyu TAMAMEN karart (koni dışı görünmez)
+//      DERS5.isiklar.spot_yesil.preset.hizHue = 0.1             → hızlı renk döngüsü
+//      DERS5.ISIK_PRESETLER                                     → ışık kütüphanesi = veri
+window.DERS5 = {
+  cihazlar,          // {duz_jet, geyser} — CihazSistemi örnekleri
+  isiklar,           // {spot_kirmizi, spot_mavi, spot_yesil} — IsikSistemi örnekleri
+  PRESETLER,         // su cihazı ham verisi
+  ISIK_PRESETLER,    // ışık cihazı ham verisi
+  renderer, scene, camera, composer, bloomPass, depthTarget, ortakUniformlar
+};
+</script>
+</body>
+</html>

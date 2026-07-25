@@ -1,0 +1,101 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>BASLIYOR</title>
+<!-- sablon-donma.html — TEK DEGISKENLI IZOLASYON.
+     tools/etkilesim.sh sonsuza kadar asiliyor (chrome 15 dk sonra 0 bayt,
+     exit 124). tools/etkilesim.html Salih'in uzerinde calistigi dosya, ona
+     dokunmadan tetikleyiciyi burada yeniden uretiyoruz.
+     Supheli: sablonu IKINCI kez uygulamak (toplu silmeden sonra) sayfayi
+     donduruyor. Uc varyant, hash ile secilir:
+       #a = sablon bir kez           (kontrol — donmamali)
+       #b = sablon, sonra TEKRAR sablon (silme YOK)
+       #c = sablon, hepsini sil, sonra TEKRAR sablon (etkilesim.html'in yolu)
+     Sonuc <title>'a yazilir, --dump-dom ile okunur. -->
+<style>html,body{margin:0;height:100%;background:#15171a}iframe{width:1280px;height:800px;border:0}</style>
+<iframe id="cerceve" src="/studio/index.html#mod=editor"></iframe>
+<script>
+const VARYANT = (location.hash || '#c').slice(1);
+const bekle = ms => new Promise(r => setTimeout(r, ms));
+const yaz = s => { document.title = s; };
+let adim = 'yukleme';
+// Donma nerede oldugunu gorebilmek icin her adimda basligi guncelliyoruz:
+// chrome hic cikamasa bile --dump-dom bir sey dokerse son adim gorunur.
+function isaret(a) { adim = a; yaz(VARYANT + ' | son adim: ' + a); }
+
+addEventListener('load', async () => {
+  try {
+    const C = document.getElementById('cerceve');
+    const W = C.contentWindow, D = C.contentDocument;
+    isaret('iframe yuklendi');
+    await bekle(1500);
+    const S = W.STUDIO;
+    if (!S) return yaz('HATA | STUDIO API yok');
+
+    // #g = #b ile AYNI yol, tek fark: confirm() susturuluyor. Gecerse kok
+    // sebep kanitlanmis olur (ana.js:431 sablon uzerine dosemede confirm sorar,
+    // headless'ta modal olusturucuyu suresiz kilitler).
+    if (VARYANT === 'g') W.confirm = () => true;
+
+    const sablonSec = D.getElementById('sablon');
+    const dose = () => { sablonSec.value = 'ariKovani';
+                         sablonSec.dispatchEvent(new Event('change', { bubbles: true })); };
+
+    // #d ILK sablonu ATLAR — "agir sablon TEK basina" kontrolu olmasi icin.
+    if (VARYANT !== 'd') {
+      isaret('1. sablon');
+      dose();
+      await bekle(1200);
+      isaret('1. sablon bitti (' + S.yonetici.liste().length + ' cihaz)');
+    }
+
+    if (VARYANT === 'c') {
+      isaret('toplu silme');
+      for (const c of [...S.yonetici.liste()]) S.yonetici.sil(c.id);
+      await bekle(600);
+      isaret('silindi (' + S.yonetici.liste().length + ' kaldi)');
+    }
+
+    if (VARYANT === 'b' || VARYANT === 'c' || VARYANT === 'g') {
+      isaret('2. sablon');
+      dose();
+      await bekle(1500);
+      isaret('2. sablon bitti (' + S.yonetici.liste().length + ' cihaz)');
+    }
+
+    // #d/#e: "cihaz SAYISI mi, yoksa isleyiciye IKINCI GIRIS mi donduruyor?"
+    // #d agir sablonu TEK basina doser (sayi yuksek, giris tek).
+    // #e FARKLI iki sablonu ust uste doser (sayi yuksek, giris iki).
+    if (VARYANT === 'd') {
+      isaret('agir sablon (izgara) tek basina');
+      sablonSec.value = 'izgara';
+      sablonSec.dispatchEvent(new Event('change', { bubbles: true }));
+      await bekle(2000);
+      isaret('izgara bitti (' + S.yonetici.liste().length + ' cihaz)');
+    }
+    if (VARYANT === 'e') {
+      isaret('ikinci FARKLI sablon (cizgi)');
+      sablonSec.value = 'cizgi';
+      sablonSec.dispatchEvent(new Event('change', { bubbles: true }));
+      await bekle(1500);
+      isaret('cizgi bitti (' + S.yonetici.liste().length + ' cihaz)');
+    }
+
+    // #f: SAYI mi, ISLEYICI mi? Sablona hic girmeden, urun API'siyle tek tek
+    // cihaz ekleyerek ayni sayiya cikiyoruz. Donarsa sucu sayi/butce, donmazsa
+    // sucu sablon isleyicisinin ikinci girisi.
+    if (VARYANT === 'f') {
+      isaret('tek tek ekleme');
+      for (let i = 0; i < 20; i++) {
+        S.yonetici.ekle('duz_jet', (i % 5) * 1.5 - 3, Math.floor(i / 5) * 1.5 - 3);
+        if (i % 5 === 4) await bekle(120);
+      }
+      await bekle(1500);
+      isaret('tek tek bitti (' + S.yonetici.liste().length + ' cihaz)');
+    }
+
+    yaz('BITTI | ' + VARYANT + ' | cihaz=' + S.yonetici.liste().length);
+  } catch (e) {
+    yaz('PATLADI | ' + adim + ' | ' + e.message);
+  }
+});
+</script>

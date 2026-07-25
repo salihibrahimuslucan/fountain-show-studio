@@ -1,0 +1,375 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>etkilesim: BASLIYOR</title>
+<!--
+  etkilesim.html — HEADLESS ETKILESIM KOSUCUSU (urunun parcasi DEGIL, tools/ altinda).
+
+  NEDEN VAR: smoke.sh yalnizca "sayfa acildi mi + konsol sessiz mi" der; fare
+  etkilesimlerini (paletten cihaz ekle, plandan surukle, sil, sarma) hicbir
+  otomatik kosu denemiyordu — bunlar ancak gercek tarayicida elle bakilinca
+  goruluyordu. Burada studio/index.html bir iframe'e yuklenir (ayni kaynak),
+  SENTETIK pointer olaylari gonderilir ve sonuc window.STUDIO uzerinden okunur.
+  Sonuc <title>'a yazilir; kosucu chrome --headless --dump-dom ile okur.
+
+  ⚠SINIR: gercek fare/GPU degil — "tiklama koordinati dogru elemana denk geliyor
+  mu" ve "durum dogru degisti mi" sorularini yanitlar. Gorsel dogrulama yine
+  smoke karesi, hissiyat yine [ELLE].
+-->
+<style>html,body{margin:0;background:#0a0c12}iframe{width:1280px;height:800px;border:0}</style>
+<iframe id="cerceve" src="/studio/index.html#mod=editor"></iframe>
+<script>
+const sonuclar = [];
+const bekle = (ms) => new Promise(r => setTimeout(r, ms));
+function onay(ad, kosul, detay = '') {
+  sonuclar.push((kosul ? 'OK   ' : 'HATA ') + ad + (detay ? ' — ' + detay : ''));
+}
+// Gercekci pointer dizisi: down → move → up (editor.js/plan.js pointerdown ile baslar)
+function fare(el, tip, x, y, dugme = 0, ek = {}) {
+  const r = el.getBoundingClientRect();
+  el.dispatchEvent(new PointerEvent(tip, {
+    clientX: r.left + x, clientY: r.top + y, button: dugme, buttons: tip === 'pointerup' ? 0 : 1,
+    bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse', ...ek
+  }));
+}
+// ⚠KLAVYE OLAYI BODY'DEN GONDERILIR, document'ten DEGIL: plan.js keydown
+// dinleyicisi `e.target.matches('input,textarea,select')` ile basliyor; document
+// nesnesinde .matches YOKTUR → sentetik olay TypeError ile dusuyordu ve test
+// "Delete calismiyor" diye YANLIS ALARM veriyordu. Gercek tarayicida keydown
+// hedefi her zaman bir ELEMAN'dir (odakli eleman veya body).
+function surukle(el, x0, y0, x1, y1, ek = {}) {
+  fare(el, 'pointerdown', x0, y0, 0, ek);
+  fare(el, 'pointermove', (x0 + x1) / 2, (y0 + y1) / 2, 0, ek);
+  fare(el, 'pointermove', x1, y1, 0, ek);
+  fare(el, 'pointerup', x1, y1, 0, ek);
+}
+
+// grup senaryosu (madde 5) serit-duzen.js'in saf lane hesabına ihtiyaç duyuyor —
+// fetch'i EN BAŞTA, sayfa daha yüklenirken başlatıyoruz (mid-sekans yeni bir ağ
+// isteği başlatmak virtual-time bütçesiyle -deterministik olmayan bir etkileşime
+// girip daha ÖNCEKİ, alakasız bir adımı (kaydet/aç turu) kırdı — denetim
+// 2026-07-20 bulgusu; kökü tam teşhis edilmedi, ağ isteğini öne çekmek giderdi).
+const seritDuzenP = import('/studio/js/serit-duzen.js');
+
+(async () => {
+  try {
+    const cerceve = document.getElementById('cerceve');
+    await new Promise(r => cerceve.addEventListener('load', r, { once: true }));
+    await bekle(2500);                                  // WebGL + modul kurulumu
+    const W = cerceve.contentWindow, D = W.document;
+    // ⚠HEADLESS MODAL KILIDI (2026-07-19, docs/2026-07-19-etkilesim-donmasi.md):
+    // ana.js'in sablon isleyicisi MEVCUT cihazlarin ustune doserken confirm()
+    // soruyor. Headless Chrome'da modal olusturucu SURESIZ bloklaniyor — sayfa
+    // yukleniyor ama surec hic cikmiyor (15 dk, 0 bayt). Kosucu tarafinda
+    // susturuyoruz; URUN tarafindaki confirm KALDIRILMAMALI (veri kaybettiren
+    // eylemde onay dogru davranis). Ayni tuzak ecb41de'de bir kez yasandi.
+    W.confirm = () => true;
+    W.alert = () => {};
+    W.prompt = () => null;
+    const S = W.STUDIO;
+    onay('window.STUDIO acik', !!S);
+    if (!S) throw new Error('STUDIO yok');
+
+    const plan = D.getElementById('plan-tuval');
+    onay('plan tuvali gorunur', plan && plan.clientWidth > 100, plan ? plan.clientWidth + 'px' : 'yok');
+
+    // --- 1) paletten urun sec + plana tikla = cihaz eklenir -------------------
+    const oncekiSayi = S.yonetici.liste().length;
+    const paletDugme = [...D.querySelectorAll('#palet button')].find(b => /JUMP|VARIO|SWITCH|ROBO/i.test(b.textContent));
+    onay('palette urun dugmesi var', !!paletDugme, paletDugme?.textContent?.trim());
+    paletDugme.click();
+    await bekle(120);
+    fare(plan, 'pointerdown', 300, 200); fare(plan, 'pointerup', 300, 200);
+    await bekle(200);
+    const eklendi = S.yonetici.liste().length;
+    onay('plana tiklayinca cihaz eklendi', eklendi === oncekiSayi + 1, `${oncekiSayi} -> ${eklendi}`);
+
+    // dosemeyi bitir (sag tik) — yoksa sonraki tiklar da cihaz ekler
+    plan.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    await bekle(120);
+
+    // --- 2) cihazi surukle = konum degisir ------------------------------------
+    const c0 = S.yonetici.liste().at(-1);
+    surukle(plan, 300, 200, 380, 260);
+    await bekle(200);
+    const c1 = S.yonetici.liste().find(c => c.id === c0.id);
+    const tasindi = Math.abs(c1.x - c0.x) > 0.05 || Math.abs(c1.z - c0.z) > 0.05;
+    onay('cihaz surukleyince tasindi', tasindi,
+      `(${c0.x.toFixed(2)},${c0.z.toFixed(2)}) -> (${c1.x.toFixed(2)},${c1.z.toFixed(2)})`);
+
+    // --- 3) sag tik dosemeyi bitirdi mi (bos yere tik cihaz EKLEMEMELI) -------
+    const sayiOnce = S.yonetici.liste().length;
+    fare(plan, 'pointerdown', 120, 120); fare(plan, 'pointerup', 120, 120);
+    await bekle(150);
+    onay('doseme bittikten sonra bos tik cihaz EKLEMEZ', S.yonetici.liste().length === sayiOnce,
+      `${sayiOnce} -> ${S.yonetici.liste().length}`);
+
+    // --- 5) serit editoru: bos seride tik = anahtar ekler ---------------------
+    const serit = D.getElementById('serit-tuval');
+    onay('serit tuvali gorunur', serit && serit.clientWidth > 100, serit ? serit.clientWidth + 'px' : 'yok');
+    if (S.cizelge.kanallar.length) {
+      const kanal = S.cizelge.kanallar.find(k => k.hedef.endsWith('.master'));
+      const oncekiAnahtar = kanal ? kanal.anahtarlar.length : 0;
+      // gutter'in sagina, ilk lane bandina tikla (lane yuksekligi ~14-24 px)
+      fare(serit, 'pointerdown', 400, 40); fare(serit, 'pointerup', 400, 40);
+      await bekle(200);
+      const sonra = kanal ? kanal.anahtarlar.length : 0;
+      onay('serit tuvali tiklamayi isliyor (anahtar sayisi degisti VEYA kanal korundu)',
+        sonra >= oncekiAnahtar, `${oncekiAnahtar} -> ${sonra}`);
+      // anahtarlar ARTAN kalmali (surukleme kelepcesi regresyonu)
+      let artan = true;
+      for (const k of S.cizelge.kanallar)
+        for (let i = 1; i < k.anahtarlar.length; i++)
+          if (k.anahtarlar[i][0] < k.anahtarlar[i - 1][0]) artan = false;
+      onay('tum kanallar ARTAN sirali', artan);
+    }
+
+    // --- 4) Delete = secili cihaz silinir -------------------------------------
+    fare(plan, 'pointerdown', 380, 260); fare(plan, 'pointerup', 380, 260);   // sec
+    await bekle(120);
+    const silOnce = S.yonetici.liste().length;
+    D.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+    await bekle(200);
+    onay('Delete secili cihazi siler', S.yonetici.liste().length === silOnce - 1,
+      `${silOnce} -> ${S.yonetici.liste().length}`);
+
+    // --- 6) transport: scrub + oynat/duraklat --------------------------------
+    S.transport.scrubla(5);
+    await bekle(60);
+    onay('scrubla sov saatini tasiyor', Math.abs(S.transport.showT - 5) < 0.6, 'showT=' + S.transport.showT.toFixed(2));
+    S.transport.scrubla(-3);
+    await bekle(60);
+    onay('negatif scrub kelepcelenir', S.transport.showT >= 0, 'showT=' + S.transport.showT.toFixed(2));
+    S.transport.scrubla(S.transport.sure + 50);
+    await bekle(60);
+    onay('sure ustu scrub kelepcelenir', S.transport.showT <= S.transport.sure + 0.01,
+      `showT=${S.transport.showT.toFixed(2)} sure=${S.transport.sure}`);
+
+
+    // --- 8) KARE SECIM (AutoCAD tarzi lastik dikdortgen) + R + toplu Delete ---
+    // Sablonla kalabalik bir sahne dose, sonra bir bolgeyi kare secimle yakala.
+    const sablonSec = D.getElementById('sablon');
+    if (sablonSec) {
+      sablonSec.value = 'cizgi';        // hafif sablon: swiftshader'da 37 cihazlik daire cok yavas
+      sablonSec.dispatchEvent(new Event('change', { bubbles: true }));
+      await bekle(700);
+    }
+    const sablonSayi = S.yonetici.liste().length;
+    onay('sablon cihaz dosedi', sablonSayi > 5, sablonSayi + ' cihaz');
+
+    if (sablonSayi > 5) {
+      // bos alandan sol surukle = kare secim (pan artik yalniz ORTA tusta)
+      const acilarOnce = S.yonetici.liste().map(c => c.aci ?? 0);
+      surukle(plan, 60, 60, 940, 520);
+      await bekle(250);
+      // R = secimin hepsini dondur
+      D.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', bubbles: true }));
+      await bekle(250);
+      const acilarSonra = S.yonetici.liste().map(c => c.aci ?? 0);
+      const donenSayi = acilarSonra.filter((a, i) => a !== acilarOnce[i]).length;
+      onay('kare secim + R toplu dondurdu', donenSayi > 1, donenSayi + ' cihaz dondu');
+
+      // toplu Delete
+      const silOnce2 = S.yonetici.liste().length;
+      D.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+      await bekle(400);
+      const silSonra2 = S.yonetici.liste().length;
+      onay('toplu Delete birden fazla cihaz sildi', silOnce2 - silSonra2 > 1,
+        `${silOnce2} -> ${silSonra2}`);
+    }
+
+    // --- 9) kaydet/ac turu: durum kaybolmadan geri geliyor mu ----------------
+    if (sablonSec) {
+      sablonSec.value = 'ariKovani';
+      sablonSec.dispatchEvent(new Event('change', { bubbles: true }));
+      await bekle(900);
+    }
+    const oncekiCihaz = S.yonetici.liste().length;
+    const oncekiKanal = S.cizelge.kanallar.length;
+    onay('ikinci sablon dosendi', oncekiCihaz > 10, `${oncekiCihaz} cihaz / ${oncekiKanal} kanal`);
+    // 💾 kaydet dugmesi indirme acar (headless'ta dogrulanamaz) → dosya yuvarlagini
+    // urun API'siyle kos: durumu yaz, sahneyi boz, geri oku.
+    const W2 = cerceve.contentWindow;
+    if (W2.STUDIO && S.cizelge) {
+      const metin = JSON.stringify({ surum: 1, ad: 'etkilesim-turu',
+        mekan: { fon: 'meydan', plan: null },
+        cihazlar: S.yonetici.liste(),
+        cizelge: JSON.parse(JSON.stringify(S.cizelge)), muzikAdi: null });
+      for (const c of S.yonetici.liste()) S.yonetici.sil(c.id);
+      await bekle(200);
+      onay('sahne temizlendi', S.yonetici.liste().length === 0);
+      const dosya = new W2.File([metin], 'etkilesim-turu.aqshow', { type: 'application/json' });
+      const girdi = D.getElementById('projeDosya') || D.querySelector('input[type=file]');
+      if (girdi) {
+        const dt = new W2.DataTransfer(); dt.items.add(dosya);
+        girdi.files = dt.files;
+        girdi.dispatchEvent(new Event('change', { bubbles: true }));
+        // ⚠1200→2000: bu adım toplam sayfa/script büyüklüğüne DUYARLI bir yarış
+        // koşuluydu — projeDosya.onchange async (await f.text() + sahneKur), bekle
+        // süresi sabit; grup senaryosu turu eklendikten sonra (2026-07-20) izole
+        // git-stash denemesinde belirdi: TEK BAŞINA aynı sabit süreyle bazen 19→0
+        // düşüyordu, script'e trivial bir satır eklenince bile geçiyordu — klasik
+        // zamanlama duyarlılığı (flake), grup senaryosu MANTIĞINDAN bağımsız.
+        // Pay büyütmek kapsam dışı davranış değişikliği değil, aynı doğrulamanın
+        // güvenilirliğini artırıyor.
+        await bekle(2000);
+        onay('dosyadan acinca cihazlar geri geldi',
+          S.yonetici.liste().length === oncekiCihaz,
+          `${oncekiCihaz} -> ${S.yonetici.liste().length}`);
+        onay('kanallar geri geldi', S.cizelge.kanallar.length === oncekiKanal,
+          `${oncekiKanal} -> ${S.cizelge.kanallar.length}`);
+      }
+    }
+
+    // --- 7) mod degistirme (TAB) ---------------------------------------------
+    D.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    await bekle(300);
+    onay('TAB sov moduna gecirir', D.body.className.includes('mod-sov'), D.body.className);
+    D.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    await bekle(300);
+    onay('TAB editore geri doner', D.body.className.includes('mod-editor'), D.body.className);
+
+    // --- 10) F1 GRUP SENARYOSU: çoklu seçim → grupla → desen uygula → elle
+    // koru → gruba döndür → kaydet/aç turu (Task 11 kod turu). ------------------
+    // Önceki adımların sahnesi (ariKovani şablonu + kaydet/aç turu) kalabalık ve
+    // grup üyeliği için belirsiz — API ile temiz sayfaya dönüyoruz (ürün API'si
+    // ile silme zaten yukarıdaki kaydet/aç turunda da kullanıldı, madde 190).
+    for (const c of S.yonetici.liste()) S.yonetici.sil(c.id);
+    await bekle(150);
+    onay('grup senaryosu için sahne temizlendi', S.yonetici.liste().length === 0,
+      S.yonetici.liste().length + ' cihaz');
+
+    const gruplarOnce = S.gruplar().length;
+    paletDugme.click();
+    await bekle(120);
+    const grupKoordlar = [[300, 150], [500, 150], [700, 150]];   // kare seçimin ucunu kapsasın diye ayrık
+    for (const [gx, gy] of grupKoordlar) {
+      fare(plan, 'pointerdown', gx, gy); fare(plan, 'pointerup', gx, gy);
+      await bekle(80);
+    }
+    plan.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));   // döşemeyi bitir
+    await bekle(120);
+    const grupCihazSayisi = S.yonetici.liste().length;
+    onay('grup senaryosu için 3 cihaz eklendi', grupCihazSayisi === 3, grupCihazSayisi + ' cihaz');
+
+    // çoklu seçim: boş alandan kare seçim sürükle (üç cihazı da kapsayan geniş dikdörtgen)
+    surukle(plan, 200, 80, 800, 220);
+    await bekle(200);
+    const grupla = D.getElementById('grupla');
+    onay('kare seçim sonrası Grupla düğmesi görünür', grupla && !grupla.hidden,
+      grupla ? 'hidden=' + grupla.hidden : 'düğme yok');
+
+    grupla.click();
+    await bekle(150);
+    const gruplarSonra1 = S.gruplar().length;
+    const yeniGrupObj = S.gruplar().at(-1);
+    onay('Grupla tıklayınca yeni grup kuruldu', gruplarSonra1 === gruplarOnce + 1,
+      `${gruplarOnce} -> ${gruplarSonra1}`);
+    onay('yeni grubun 3 üyesi var', !!yeniGrupObj && yeniGrupObj.uyeler.length === 3,
+      yeniGrupObj ? yeniGrupObj.uyeler.length + ' üye' : 'grup yok');
+
+    // desen uygula (dalga) — üç üyenin master kanalına derlenmeli
+    const grupDesenEl = D.getElementById('grup-desen'), desenUygulaBtn = D.getElementById('desen-uygula');
+    const uyeIdler = yeniGrupObj ? [...yeniGrupObj.uyeler] : [];
+    const masterKanali = (id) => S.cizelge.kanallar.find(k => k.hedef === id + '.master');
+    grupDesenEl.value = 'dalga';
+    desenUygulaBtn.click();
+    await bekle(150);
+    const hepsiGrupDamgali = uyeIdler.length === 3 && uyeIdler.every(id => masterKanali(id)?.kaynak === 'grup');
+    const hepsiCokAnahtarli = uyeIdler.every(id => (masterKanali(id)?.anahtarlar.length ?? 0) > 2);
+    onay('desen uygula: 3 üyenin master kanalı kaynak=grup', hepsiGrupDamgali);
+    onay('desen uygula: master kanalları çok-anahtarlı (desen gerçekten yazıldı)', hepsiCokAnahtarli);
+
+    // bir üyenin master şeridini ELLE sürükle → o kanal kaynak='elle' olmalı.
+    // Grup başlığı laneleri sıralamayı kaydırdığı için piksel koordinatı TAHMİN
+    // EDİLMEZ — editörün kendi düzen fonksiyonları (serit-duzen.js, saf/Node
+    // testli) dinamik import edilip S.cizelge.kanallar + S.gruplar() ile AYNI
+    // hesap tekrarlanır (editor.js kurLayout'un birebir aynı çağrısı).
+    const hedefId = uyeIdler[0];
+    const { gruplaLaneler, laneYerlestir } = await seritDuzenP;   // önceden tetiklendi (yukarı bkz.)
+    const SD_RULER = 18;   // editor.js GUTTER/RULER sabitleriyle aynı (GRUP_H varsayılan 16 kullanılır)
+    function grupLaneBul(hedef) {
+      const laneler = laneYerlestir(
+        gruplaLaneler(S.cizelge.kanallar, new Set(), null, S.gruplar()), serit.clientHeight, SD_RULER);
+      return laneler.find(l => l.tip === 'kanal' && l.kanal.hedef === hedef);
+    }
+    const hedefLane1 = grupLaneBul(hedefId + '.master');
+    onay('elle-sürükle hedefi için lane bulundu', !!hedefLane1,
+      hedefLane1 ? `yTop=${hedefLane1.yTop.toFixed(0)} H=${hedefLane1.laneH.toFixed(0)}` : 'yok');
+    if (hedefLane1) {
+      const xKlik = 300;   // GUTTER(138)'ün sağı — mevcut serit tıklama kalıbıyla aynı büyüklük (bkz. madde 5)
+      surukle(serit, xKlik, hedefLane1.yTop + 4, xKlik, hedefLane1.yTop + hedefLane1.laneH - 4);
+      await bekle(150);
+    }
+    const kanalOnce = masterKanali(hedefId);
+    onay('elle sürükleme kanalı elle damgaladı', kanalOnce?.kaynak === 'elle',
+      kanalOnce ? 'kaynak=' + kanalOnce.kaynak : 'kanal yok');
+    const elleSnapshot = kanalOnce ? JSON.parse(JSON.stringify(kanalOnce.anahtarlar)) : null;
+
+    // desen uygula TEKRAR: elle kanal DEĞİŞMEMELİ, diğer üyeler yenilenmeli.
+    // ⚠AYNI periyot/desen ile tekrar derlemek matematiksel olarak BİREBİR AYNI
+    // çıktıyı üretir (deterministik fonksiyon, aynı girdi) — "yenilendi" gerçekte
+    // sınanamaz. Gerçekçi ikinci jest: kullanıcı periyot kaydırıcısını değiştirip
+    // yeniden uygular (grup-periyot input'unun DOM value'su desenUygulaBtn.onclick
+    // tarafından tıklama anında doğrudan okunur, change/input olayı şart değil).
+    const digerUyeler = uyeIdler.filter((id) => id !== hedefId);
+    const digerOnceki = Object.fromEntries(digerUyeler.map((id) => [id, JSON.stringify(masterKanali(id)?.anahtarlar)]));
+    D.getElementById('grup-periyot').value = '4.5';
+    desenUygulaBtn.click();
+    await bekle(150);
+    const kanalSonra = masterKanali(hedefId);
+    const elleKorunduMu = kanalSonra?.kaynak === 'elle' &&
+      JSON.stringify(kanalSonra.anahtarlar) === JSON.stringify(elleSnapshot);
+    onay('tekrar desen uygula: elle kanalın anahtarları DEĞİŞMEDİ', elleKorunduMu);
+    const digerYenilendiMi = digerUyeler.length > 0 &&
+      digerUyeler.every((id) => JSON.stringify(masterKanali(id)?.anahtarlar) !== digerOnceki[id]);
+    onay('tekrar desen uygula: diğer üyelerin kanalları yenilendi', digerYenilendiMi);
+
+    // gruba döndür: elle damgası kalkmalı, kanal tekrar kaynak='grup' olmalı.
+    // ⚠BU ADIM BİR ÜRÜN HATASINI YAKALADI ve düzeltmeyi de kanıtlıyor: #gruba-dondur'un
+    // görünürlüğü yalnız panelGuncelle'de hesaplanıyor, o da eskiden SADECE plan tuvali
+    // olaylarına bağlıydı → şeridi elle düzenleyen kullanıcıda düğme, fare plan tuvaline
+    // uğrayana dek gizli kalıyordu. Düzeltme: editor.js elle damgasını basarken
+    // ctx.panelTazele() ile paneli tazeliyor (tek yönlü). BURADA PLAN TUVALİNE
+    // DOKUNMUYORUZ — sürüklemenin hemen ardından assert ediyoruz ki hata geri gelirse
+    // test kırılsın (aksi halde fazladan bir jest hatayı sonsuza dek maskelerdi).
+    const grubaDondurBtn = D.getElementById('gruba-dondur');
+    onay('elle kanal varken gruba-dondur görünür', grubaDondurBtn && !grubaDondurBtn.hidden,
+      grubaDondurBtn ? 'hidden=' + grubaDondurBtn.hidden : 'düğme yok');
+    grubaDondurBtn.click();
+    await bekle(150);
+    const kanalDondu = masterKanali(hedefId);
+    onay('gruba döndür: elle damgası kalktı, kaynak=grup', kanalDondu?.kaynak === 'grup',
+      kanalDondu ? 'kaynak=' + kanalDondu.kaynak : 'kanal yok');
+
+    // kaydet→aç turu: grup üyeleri sahneKur id-remap köprüsünden geçip hayatta kalıyor mu
+    const gruplarKaydetOnce = S.gruplar().length;
+    const grupMetin = JSON.stringify({ surum: 1, ad: 'etkilesim-grup-turu',
+      mekan: { fon: 'meydan', plan: null },
+      cihazlar: S.yonetici.liste(),
+      cizelge: JSON.parse(JSON.stringify(S.cizelge)),
+      gruplar: JSON.parse(JSON.stringify(S.gruplar())),
+      muzikAdi: null });
+    const grupDosya = new W2.File([grupMetin], 'etkilesim-grup-turu.aqshow', { type: 'application/json' });
+    const grupGirdi = D.getElementById('projeDosya') || D.querySelector('input[type=file]');
+    if (grupGirdi) {
+      const dt2 = new W2.DataTransfer(); dt2.items.add(grupDosya);
+      grupGirdi.files = dt2.files;
+      grupGirdi.dispatchEvent(new Event('change', { bubbles: true }));
+      await bekle(1200);
+      const gruplarAcSonra = S.gruplar().length;
+      const acilanGrup = S.gruplar()[0];
+      onay('kaydet→aç turu: grup hayatta kaldı', gruplarAcSonra === gruplarKaydetOnce,
+        `${gruplarKaydetOnce} -> ${gruplarAcSonra}`);
+      onay('kaydet→aç turu: grup 3 üyeyle geri geldi', acilanGrup && acilanGrup.uyeler.length === 3,
+        acilanGrup ? acilanGrup.uyeler.length + ' üye' : 'grup yok');
+    } else {
+      onay('kaydet→aç turu ATLANDI (dosya girdisi bulunamadı)', true);
+    }
+
+    const hata = sonuclar.filter(s => s.startsWith('HATA')).length;
+    document.title = (hata ? `etkilesim: ${hata} HATA` : 'etkilesim: HEPSI OK') + ' || ' + sonuclar.join(' || ');
+  } catch (e) {
+    document.title = 'etkilesim: COKTU — ' + e.message + ' || ' + sonuclar.join(' || ');
+  }
+})();
+</script>

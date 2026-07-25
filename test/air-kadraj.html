@@ -1,0 +1,62 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>AquaAIR kadraj koşumu</title>
+<!--
+  v7 AIR turu teşhis koşumu. AquaAIR'in balistik tepesi v²/2g ≈ 20 m; studio'nun
+  şov kamerası (11,6,13 / hedef 0,2,0 / fov 55) ancak ~11 m'yi kadraja alıyor,
+  yani cihazın görünürlüğü ÜRÜN kamerasıyla ölçülemiyor. Bu sayfa ürün koduna
+  kamera hilesi eklemeden kolonun TAMAMINI gösterir: aynı motor, aynı preset,
+  geriye alınmış kamera.
+  Kullanım: tools/smoke.sh "test/air-kadraj.html#t=1.2" cikti.png
+-->
+<style>html,body{margin:0;height:100%;background:#05070d;overflow:hidden}canvas{display:block}</style>
+<script type="importmap">
+{ "imports": { "three": "../studio/vendor/three/three.module.js",
+               "three/addons/": "../studio/vendor/three/jsm/" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { motorKur } from '../studio/js/motor.js';
+
+const hedefT = +((location.hash.match(/t=([\d.]+)/) || [])[1] ?? 1.2);
+const tur = (location.hash.match(/tur=(\w+)/) || [])[1] ?? 'air';
+
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+// Kolonun boyu okunabilsin diye 2 m aralıklı ölçek çubuğu (sahnede, üründe DEĞİL).
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.3, 400);
+camera.position.set(26, 13, 32);
+camera.lookAt(0, 11, 0);
+
+const zemin = new THREE.Mesh(new THREE.CircleGeometry(14, 48),
+  new THREE.MeshBasicMaterial({ color: 0x0a1826 }));
+zemin.rotation.x = -Math.PI / 2;
+scene.add(zemin);
+for (let m = 5; m <= 25; m += 5) {          // yükseklik cetveli
+  const g = new THREE.BufferGeometry().setFromPoints(
+    [new THREE.Vector3(4, m, 0), new THREE.Vector3(5.2, m, 0)]);
+  scene.add(new THREE.Line(g, new THREE.LineBasicMaterial({ color: 0x335577 })));
+}
+
+const motor = motorKur(renderer, scene, camera);
+motor.cozunurlukGuncelle?.();
+const c = motor.suEkle(tur, 'a1', [0, 0]);
+c.setMaster(1);
+c.setRenk(1, 1, 1);
+
+// Sabit adımla hedef ana kadar ilerlet, sonra tek kare çiz (headless kararlı).
+const DT = 1 / 60;
+let t = 0;
+// ⚠Hedef ana varınca DURMAK yetmiyor: preserveDrawingBuffer:false olduğu için
+// headless ekran görüntüsü boş tampon yakalıyor. Zaman donar, çizim sürer.
+function kare() {
+  requestAnimationFrame(kare);
+  if (t < hedefT) { t += DT; c.setMaster(1); motor.adim(DT, t); }
+  motor.derinlikOnGecisi();
+  renderer.setRenderTarget(null);
+  renderer.render(scene, camera);
+}
+kare();
+</script>

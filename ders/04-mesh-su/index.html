@@ -1,0 +1,918 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>Ders 4 — Mesh su (lance · çan · perde)</title>
+<style>
+  body { margin: 0; overflow: hidden; background: #000; }
+  #info {
+    position: fixed; top: 8px; left: 8px;
+    color: #8fd3ff; font: 13px/1.5 Consolas, monospace;
+    text-shadow: 0 1px 2px #000;
+  }
+</style>
+</head>
+<body>
+<div id="info">Ders 4 — mesh su · x=-6&rarr;+5.5: laminer lance &middot; su çanı &middot; su perdesi · sol tık: döndür · teker: zoom · <span id="fps">-</span> fps</div>
+
+<!-- importmap: "three" adını CDN'deki gerçek dosyaya eşler.
+     Kurulum yok, npm yok — tarayıcı modülü doğrudan internetten çeker. -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+// ============================================================
+// DERS 4 — MESH SU HATTI: cam yüzey parçacık DEĞİLDİR
+//
+// Ders 2-3'te hep parçacık çizdik — köpüklü su için doğru araç.
+// Ama katalogda ikinci bir aile var: laminer lance, su çanı, su
+// perdesi... Bunların gövdesi CAM gibi: sürekli, şeffaf, damla yok.
+// docs/2026-07-14-cihaz-render-desenleri.md §0'ın ana kararı:
+//
+//   A hattı (köpüklü): geyser, comet, splash → PARÇACIK (Ders 2-3)
+//   B hattı (laminer): lance, çan, perde     → MESH + kaydırılan
+//                       doku + fresnel (parçacıkla yapılırsa delikli
+//                       VE pahalı görünür — iki kere kaybedersin)
+//
+// Kural: gövde ne kadar "cam", o kadar mesh; ne kadar "köpük", o
+// kadar parçacık. Ve her cihaz iki hattın KOMPOZİSYONU: mesh gövde
+// + kopma noktalarında (iniş, etek, alt kenar) parçacık serpintisi.
+//
+// Bu dersin iki kalbi:
+//   1) KAPALI-FORM GEOMETRİ (BLOK 3): Ders 1'in balistik formülü
+//      artık damla değil YÜZEY üretiyor — parabol → tüp, düşen
+//      halka → çan profili. Fizik aynı, çıktı mesh.
+//   2) CAM SU SHADER'I (BLOK 4): üç cihaz TEK shader çifti kullanır
+//      (Ders 3 "cihaz = veri" tezinin mesh'e taşınması) — fresnel
+//      rim + çift kaydırmalı streak dokusu + kenar maskeleri.
+//
+// Not: bu alanın hazır three.js örneği YOK (docs §1 çan satırı) —
+// reçeteler endüstri yazılarından (Valve/RiME/Cyanilux), matematik
+// bizden. Boşluğu dolduran ders bu.
+// ============================================================
+
+// ============================================================
+// BLOK 1 — SAHNE KURULUMU (Ders 2-3'ten)
+// Satır satır anlatım Ders 1'de, Ders 3 farkları Ders 3 BLOK 1'de.
+// Buradaki tek fark: kamera 3 cihazlı geniş sahneye göre (10,5,14),
+// hedef su yüzeylerinin ortalama yüksekliğine (0,2.5,0).
+// ============================================================
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x050810);
+scene.fog = new THREE.Fog(0x050810, 20, 60);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(10, 5, 14);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 2.5, 0);
+controls.enableDamping = true;
+
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(12, 48),
+  new THREE.MeshStandardMaterial({ color: 0x0a1622, roughness: 0.3, metalness: 0.2 })
+);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+
+scene.add(new THREE.AmbientLight(0x334455, 0.8));
+const lamp = new THREE.PointLight(0x5599ff, 60, 40);
+lamp.position.set(0, 5, 0);
+scene.add(lamp);
+
+const G = 9.81;  // yerçekimi — hem parçacığın hem MESH'in tek fizik sabiti
+
+// ============================================================
+// BLOK 2 — PROSEDÜREL DOKULAR
+// damlaDoku Ders 2'den aynen (anlatım orada). YENİ olan cizgiDoku:
+// laminer suyun içindeki "iplik iplik" akış imzası. Gerçek laminer
+// jete yakından bakınca camın içinde incecik parlak lifler akar —
+// o lifler bu dokudan gelecek. Doku TEK, ama BLOK 4'te aynı dokuyu
+// İKİ farklı ölçek + hızda örnekleyip toplayacağız (Valve/Cyanilux
+// reçetesi, docs §1 perde satırı): tek katman kayan doku "duvar
+// kağıdı kayıyor" gibi okunur, iki farklı frekans üst üste binince
+// göz tekrarı yakalayamaz ve "akışkan" der.
+// ============================================================
+
+// Ders 2'nin üreticisi + boyut parametresi (cizgiDoku 256 istiyor:
+// çizgiler 1-3 px — 128'de tek piksele sıkışıp merdivenleşirlerdi).
+function dokuUret(ciz, boyut = 128) {
+  const c = document.createElement('canvas');
+  c.width = c.height = boyut;
+  ciz(c.getContext('2d'), boyut);
+  return new THREE.CanvasTexture(c);  // linear kalır: renk değil YOĞUNLUK maskesi
+}
+
+const damlaDoku = dokuUret((ctx, S) => {
+  const g = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  g.addColorStop(0.0,  'rgba(255,255,255,1)');
+  g.addColorStop(0.35, 'rgba(255,255,255,0.75)');
+  g.addColorStop(1.0,  'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, S, S);
+});
+
+// cizgiDoku (streak): ~40 rastgele dikey parlak çizgi.
+// İki incelik:
+//   1) Çizgiler tam boy DEĞİL, SEGMENT (uçları gradient'le sönen
+//      şeritler). Neden: doku dikey kaydırılacak — tam boy düz bir
+//      çizgi dikeyde ötelenince kendisiyle çakışır, kayma GÖRÜNMEZ
+//      olurdu. Akış hissi ancak dikeyde varyasyon varsa doğar.
+//   2) wrapS = wrapT = RepeatWrapping ŞART: doku hem dikeyde akıp
+//      döşenecek hem yatayda tekrar edecek. Kenardan taşan her
+//      segment karşı kenara da çizilir ki döşeme dikişsiz olsun.
+const cizgiDoku = dokuUret((ctx, S) => {
+  // Tek segment: dikey şerit, uçları yumuşak (blur hissinin yarısı bu
+  // gradient, diğer yarısı üst üste bindirilen ofsetli kopyalar).
+  function serit(x, y0, w, boy, a) {
+    const g = ctx.createLinearGradient(0, y0, 0, y0 + boy);
+    g.addColorStop(0.0, 'rgba(255,255,255,0)');
+    g.addColorStop(0.5, `rgba(255,255,255,${a.toFixed(3)})`);
+    g.addColorStop(1.0, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(x, y0, w, boy);
+  }
+  for (let i = 0; i < 40; i++) {
+    const x   = Math.random() * S;
+    const w   = 1 + Math.random() * 2;            // 1–3 px genişlik
+    const boy = S * (0.25 + Math.random() * 0.45); // segment boyu
+    const y0  = Math.random() * S;
+    const alfa = 0.15 + Math.random() * 0.35;
+    // Her çizgi 2-3 kez küçük x-ofsetle üst üste: sert tek çizgi
+    // yerine hafif bulanık bir lif. Alfa kopya sayısına bölünür ki
+    // toplam parlaklık hedeflenen bantta kalsın.
+    const kopya = 2 + Math.floor(Math.random() * 2);
+    for (let k = 0; k < kopya; k++) {
+      const ox = x + (Math.random() - 0.5) * 3;
+      const a  = alfa / kopya;
+      // asıl + dikey wrap kopyası + yatay wrap kopyası (dikişsizlik)
+      serit(ox,     y0,     w, boy, a);
+      serit(ox,     y0 - S, w, boy, a);
+      serit(ox - S, y0,     w, boy, a);
+      serit(ox - S, y0 - S, w, boy, a);
+    }
+  }
+}, 256);
+cizgiDoku.wrapS = cizgiDoku.wrapT = THREE.RepeatWrapping;
+
+// ============================================================
+// BLOK 3 — KAPALI-FORM GEOMETRİ (dersin kalbi #1)
+//
+// Ders 1'de p(t) = p0 + v·t − ½g·t²·ŷ formülü DAMLA konumu üretiyordu.
+// Bu derste aynı formül YÜZEY üretiyor: parabolü örnekleyip tüp
+// geçiriyoruz (lance), düşen su halkasının profilini örnekleyip
+// torna çekiyoruz (çan). Fizik hiç değişmedi — çıktının veri tipi
+// değişti: Vector3 damla → BufferGeometry mesh.
+//
+// UV KANONU (motor kuralı, BLOK 4'ün ön şartı):
+//   v = AKIŞ EKSENİ, v=0 kaynak (nozul), v=1 düşüş.
+// Böylece TEK shader üç geometride de dokuyu doğru yönde kaydırır:
+//   - LatheGeometry v'yi zaten profil boyunca verir (üst→etek) ✓
+//   - TubeGeometry yol eksenini u'ya koyar → kurduktan sonra u↔v
+//     TAKAS ediyoruz (aşağıda uvKanonTakas)
+//   - PlaneGeometry v=1'i ÜSTE koyar → v'yi ters çeviriyoruz
+// Üç düzeltme de kurulumda bir kez; shader hiçbir geometri tipini
+// bilmek zorunda kalmaz. "Cihaz = veri" tezinin geometri ayağı bu.
+// ============================================================
+
+// ---- 3a. Lance parabolü ---------------------------------------
+// Laminer lance: camdan bir çubuk gibi kesintisiz parabol (docs §1:
+// "parçacık DEĞİL: parabol boyunca TubeGeometry"). Çıkış noktası,
+// yön ve hız verilince eğri TAMAMEN belirli — kapalı form:
+//   p(t) = başlangıç + yön·(v0·cosθ·t) + ŷ·(v0·sinθ·t − ½g·t²)
+const LANCE_POS   = new THREE.Vector3(-6, 0.2, 0);  // nozul: küçük gövde yüksekliği
+const LANCE_YON   = new THREE.Vector3(1, 0, 0);     // merkeze doğru atar (+x)
+const LANCE_V0    = 9.5;    // m/s → menzil sin(2θ)·v0²/g ≈ 8.7–9.2 m (çanın üstünden aşar)
+const LANCE_ORNEK = 48;     // örnek sayısı — tüp segment sayısıyla aynı
+
+// Hem eğriyi hem İNİŞ NOKTASINI döndürür: iniş noktası BLOK 5'te
+// serpinti emitter'ının bağlanacağı yer — geometri ile efekt aynı
+// matematikten beslenir, elle senkron tutulacak ikinci kopya yok.
+function lanceEgrisiUret(v0, thetaDeg) {
+  const theta = THREE.MathUtils.degToRad(thetaDeg);
+  const vYatay = v0 * Math.cos(theta);
+  const vDikey = v0 * Math.sin(theta);
+  // Uçuş süresi de kapalı form: y(t) = y0 + vDikey·t − ½g·t² = 0
+  // ikinci derece denkleminin pozitif kökü. "y<0 olana dek döngüyle
+  // yürü" de olurdu; kök varken adım adım aramak israf.
+  const T = (vDikey + Math.sqrt(vDikey * vDikey + 2 * G * LANCE_POS.y)) / G;
+  const noktalar = [];
+  for (let i = 0; i < LANCE_ORNEK; i++) {
+    const t = (i / (LANCE_ORNEK - 1)) * T;
+    noktalar.push(new THREE.Vector3(
+      LANCE_POS.x + LANCE_YON.x * vYatay * t,
+      LANCE_POS.y + vDikey * t - 0.5 * G * t * t,
+      LANCE_POS.z + LANCE_YON.z * vYatay * t
+    ));
+  }
+  return {
+    egri: new THREE.CatmullRomCurve3(noktalar),  // TubeGeometry Curve ister
+    inis: noktalar[noktalar.length - 1].clone()  // y≈0 — serpinti buraya bağlanır
+  };
+}
+
+// TubeGeometry(egri, tubularSegments, yarıçap, radialSegments):
+// three yol eksenini u'ya, çevreyi v'ye koyar — bizim kanonun tersi.
+// Takas kurulum maliyeti: 48×13 ≈ 637 vertex, her rebuild'de önemsiz.
+function uvKanonTakas(geo) {
+  const uv = geo.attributes.uv;
+  for (let i = 0; i < uv.count; i++) {
+    const u = uv.getX(i), v = uv.getY(i);
+    uv.setXY(i, v, u);   // yeni u = çevre, yeni v = yol (0=nozul, 1=iniş)
+  }
+}
+
+// ---- 3b. Çan profili ------------------------------------------
+// Su çanı: su, direğin tepesindeki halkasal yarıktan YATAY-RADYAL
+// çıkar (r0 yarıçap, h0 yükseklik, vr radyal hız) ve yerçekimiyle
+// düşerken zar gibi kapanan bir yüzey çizer. Profil yine kapalı form:
+//   r(t) = r0 + vr·t        (yatayda sabit hız — sürtünme yok)
+//   y(t) = h0 − ½g·t²       (dikeyde serbest düşüş)
+// Bu profil LatheGeometry ile Y ekseni etrafında döndürülünce çan
+// çıkar. DİKKAT: LatheGeometry profili Vector2 dizisidir ve
+// X = YARIÇAP (≥0 olmalı), Y = YÜKSEKLİK — eksenleri karıştırmak
+// bu API'nin klasik tuzağı.
+const CAN_POS = new THREE.Vector3(0, 0, 0);
+
+function canProfilUret(r0, h0, vr) {
+  const T = Math.sqrt(2 * h0 / G);   // y=0'a düşüş süresi (kapalı form)
+  const profil = [];
+  const ORNEK = 24;                  // profil 24 örnek — çan pürüzsüz, maliyet önemsiz
+  for (let i = 0; i < ORNEK; i++) {
+    const t = (i / (ORNEK - 1)) * T;
+    profil.push(new THREE.Vector2(r0 + vr * t, h0 - 0.5 * G * t * t));
+  }
+  // Etek yarıçapı (iniş çemberi) da fonksiyondan döner: halka
+  // serpintisi (BLOK 5) TAM su hattının yere değdiği çembere oturur.
+  return { profil, etekYaricap: r0 + vr * T };
+}
+
+// ---- 3c. Perde ------------------------------------------------
+// Su perdesi: nozul çubuğundan düşen levha. Geometri işi YOK —
+// tek quad yeter (docs §1: "tek quad + aynı doku iki ölçek/hızda").
+// Perdenin bütün canlılığı BLOK 4'teki shader'da: geometri ne kadar
+// aptalsa o kadar iyi, çünkü projeksiyon yüzeyi olarak da düz kalmalı.
+const PERDE_GENISLIK = 4, PERDE_YUKSEKLIK = 3.2;
+const PERDE_POS = new THREE.Vector3(5.5, PERDE_YUKSEKLIK / 2, 0); // alt kenar y=0'a otursun
+
+function perdeGeoUret() {
+  const geo = new THREE.PlaneGeometry(PERDE_GENISLIK, PERDE_YUKSEKLIK, 1, 1);
+  // UV kanonu: PlaneGeometry v=1'i üst kenara koyar; bizde v=0 =
+  // KAYNAK (nozul çubuğu, üstte) olmalı → v'yi ters çevir.
+  const uv = geo.attributes.uv;
+  for (let i = 0; i < uv.count; i++) uv.setY(i, 1 - uv.getY(i));
+  return geo;
+}
+
+// ============================================================
+// BLOK 4 — CAM SU SHADER'I (dersin kalbi #2)
+//
+// ÜÇ mesh TEK shader çifti kullanır — Ders 3'te dört cihaz tek
+// parçacık shader'ı paylaşıyordu, aynı tez mesh'e taşındı: farklar
+// shader DALLANMASI değil, uniform DEĞERLERİ (uAltFade, uYanFade,
+// ölçek/hız/katkılar). Şef kararı: "mesh tipi" diye bir uniform ve
+// if zinciri YOK — üç malzeme örneği aynı kaynaktan farklı sayılarla
+// kurulur. Yarın dördüncü laminer cihaz gelirse (küre, yelpaze filmi)
+// yine sadece yeni bir sayı seti olur.
+//
+// Blending kararı — AdditiveBlending, üç gerekçeyle:
+//   1) Gece sahnesindeyiz: cam su karanlıkta ışığı TOPLAYARAK görünür
+//      (kenar parlaması), additive tam bunu yapar.
+//   2) Bloom zinciri (BLOK 6) additive parlaklığı ödüllendirir —
+//      parçacık hattıyla AYNI ışık dili, iki hat yan yana uyumlu.
+//   3) MeshPhysicalMaterial transmission (gerçek kırılma) BİLİNÇLİ
+//      olarak kullanılmıyor: her kare için sahnenin ayrı bir
+//      transmission render'ı gerekir (pahalı) ve sonucu opak-aydınlık
+//      sahnelerde parlar — bizim gece additive dünyamıza uymaz.
+//      Ucuz yol docs §1'in tavsiyesi: "additive fresnel".
+// ============================================================
+
+// Ortak uniform nesneleri (Ders 2 seti + uTime — spread ile her
+// malzemeye AYNI {value} nesnesi gider, bir yerden güncellemek
+// hepsini günceller). uTime'ı bu derste hem su mesh'leri (doku
+// kaydırma) hem gerekirse serpinti kullanır.
+const ortakUniformlar = {
+  uDerinlikDoku: { value: null },                // BLOK 6'da dolacak
+  uCozunurluk:   { value: new THREE.Vector2() },
+  uKameraYakin:  { value: camera.near },
+  uKameraUzak:   { value: camera.far },
+  uPixelYariCap: { value: 1 },                   // resize'da güncellenir
+  uTime:         { value: 0 }
+};
+
+function katmanUniformlari(ozel) {
+  return { ...ortakUniformlar, ...ozel };
+}
+
+// Soft-fade GLSL bloğu (Ders 2 BLOK 4'ten aynen — anlatım orada).
+// Bu derste sadece SERPİNTİ parçacıkları kullanır; su mesh'leri
+// kullanmaz çünkü zemine değdikleri yerler zaten UV alt-fade
+// maskesiyle eriyor — derinlik okuması orada gereksiz masraf olurdu.
+const SOFT_FADE_GLSL = /* glsl */`
+  #include <packing>
+  uniform sampler2D uDerinlikDoku;  // opak sahnenin derinlik fotoğrafı
+  uniform vec2  uCozunurluk;
+  uniform float uKameraYakin;
+  uniform float uKameraUzak;
+  uniform float uYumusaklik;        // geçiş bandı (m)
+
+  float softFade(float fragViewZ) {
+    vec2 uv = gl_FragCoord.xy / uCozunurluk;
+    float sahneDerinlik = texture2D(uDerinlikDoku, uv).x;
+    float sahneViewZ = perspectiveDepthToViewZ(sahneDerinlik, uKameraYakin, uKameraUzak);
+    return smoothstep(0.0, uYumusaklik, fragViewZ - sahneViewZ);
+  }
+`;
+
+// ---- 4a. Su vertex shader -------------------------------------
+const suVertex = /* glsl */`
+  varying vec2 vUv;       // BLOK 3'ün UV kanonu buradan fragment'a akar
+  varying vec3 vNormal;   // kamera-uzayı normal (fresnel için)
+  varying vec3 vViewDir;  // fragmandan kameraya bakış vektörü (kamera-uzayı)
+
+  void main() {
+    vUv = uv;
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    // normalMatrix: modelView'in normal-güvenli tersi-devriği — three
+    // ShaderMaterial'e bedava enjekte eder. Normal ile bakış vektörünü
+    // AYNI uzayda (kamera uzayı) tutuyoruz; uzay karıştırmak fresnel'i
+    // sessizce bozar (klasik hata).
+    vNormal = normalize(normalMatrix * normal);
+    // Kamera-uzayında kamera ORİJİNDE oturur → fragmandan kameraya
+    // yön = -konum. Normalize'ı fragment'a bırakıyoruz (interpolasyon
+    // sonrası tekrar gerekecekti zaten).
+    vViewDir = -mvPosition.xyz;
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`;
+
+// ---- 4b. Su fragment shader -----------------------------------
+const suFragment = /* glsl */`
+  uniform sampler2D uCizgiDoku;
+  uniform vec3  uRenk;
+  uniform float uAlfa;          // toplam ışık düğmesi — additive'de KÜÇÜK kalmalı
+  uniform float uFresnelGuc;    // rim'in ne kadar kenara sıkışacağı (üs)
+  uniform float uFresnelKatki;  // renk formülünde fresnel ağırlığı
+  uniform float uAkisKatki;     // renk formülünde streak ağırlığı
+  uniform float uOlcek1;        // streak örnekleme #1: doku ölçeği
+  uniform float uHiz1;          //   ve akış hızı (v-birimi/sn)
+  uniform float uOlcek2;        // streak örnekleme #2: FARKLI ölçek
+  uniform float uHiz2;          //   ve FARKLI hız — tekrar kırıcı
+  uniform float uAltFade;       // alt kenar erime bandı (0 = kapalı)
+  uniform float uYanFade;       // yan kenar erime bandı (0 = kapalı)
+  uniform float uTime;
+  varying vec2 vUv;
+  varying vec3 vNormal;
+  varying vec3 vViewDir;
+
+  void main() {
+    // 1) FRESNEL RIM — camın fiziği: yüzeye dik bakınca ışık İÇİNDEN
+    // geçer (neredeyse görünmez), kenardan sıyırarak bakınca YANSIR
+    // (parlak çizgi). Su zarının "orada ama şeffaf" hissinin anahtarı.
+    // |dot| kullanıyoruz çünkü malzeme DoubleSide: arka yüzde normal
+    // ile bakış ters düşer, abs iki yüzü tek formülde eşitler (çanın
+    // iç yüzeyi de, perdenin arkası da doğru parlar). gl_FrontFacing
+    // ile normali çevirmek de gerekmez — abs zaten yön-bağımsız.
+    vec3 N = normalize(vNormal);
+    vec3 V = normalize(vViewDir);
+    float fresnel = pow(1.0 - abs(dot(N, V)), uFresnelGuc);
+
+    // 2) ÇİFT KAYDIRMALI STREAK (Valve/Cyanilux "tek doku, çift
+    // örnekleme" reçetesi): aynı doku iki farklı ölçek+hızda okunur,
+    // ağırlıklı toplanır. Tek katman = kayan duvar kağıdı; iki farklı
+    // frekans = göz tekrarı yakalayamaz, "akışkan" okur.
+    // Ofset -v yönünde ÇIKARILIYOR: örnek koordinatı geriye kayınca
+    // desen İLERİ (v=0 kaynaktan v=1 düşüşe) akar. BLOK 3'ün UV
+    // kanonu sayesinde bu TEK satır üç geometride de doğru yönde:
+    // tüpte yol boyu, çanda profil boyu (yukarıdan eteğe), perdede
+    // düşey aşağı — shader hangi mesh'te olduğunu BİLMİYOR bile.
+    float s1 = texture2D(uCizgiDoku, vUv * uOlcek1 - vec2(0.0, uTime * uHiz1)).a;
+    float s2 = texture2D(uCizgiDoku, vUv * uOlcek2 - vec2(0.0, uTime * uHiz2)).a;
+    float akis = s1 * 0.6 + s2 * 0.4;
+
+    // 3) KENAR MASKELERİ — cam zarın koptuğu yerlerde incelme+dağılma.
+    // ALT: v=1'e (düşüş) yaklaştıkça alfa erir. Kenara akis'ten gelen
+    // küçük bir titreme ekliyoruz: erime çizgisi düz bıçak izi değil,
+    // liflere ayrılan pürüzlü bir saçak olur (dağılma hissi).
+    // max(...,1e-4): uAltFade=0 iken smoothstep(1,1,x) tanımsız olurdu.
+    float kenarV = vUv.y + (akis - 0.5) * 0.08;
+    float altMaske = 1.0 - smoothstep(1.0 - max(uAltFade, 1e-4), 1.0, kenarV);
+    // YAN: sadece perde ister (u=0/1 kenarları havada biter); tüp ve
+    // çanda u çevre boyunca KAPALI devam eder — orada yan fade seam
+    // (dikiş çizgisi) yaratırdı, o yüzden 0 verilir ve dal atlanır.
+    // (Uniform üzerinden if: tüm fragment'lar aynı yolu izler, GPU'da
+    // gerçek dallanma maliyeti yok.)
+    float yanMaske = 1.0;
+    if (uYanFade > 0.0) {
+      yanMaske = smoothstep(0.0, uYanFade, vUv.x)
+               * (1.0 - smoothstep(1.0 - uYanFade, 1.0, vUv.x));
+    }
+
+    // 4) TOPLAM — geyser vakasının (Ders 3) SİMETRİĞİ: orada yüzlerce
+    // sprite AYNI piksele üst üste toplandığı için alfa küçük kalmak
+    // zorundaydı. Mesh TEK katmandır — üst üste binme yok, additive
+    // toplama yok. O yüzden uAlfa burada opaklık değil KAZANÇ (gain)
+    // gibi davranır ve 1 civarı değerler normaldir (ilk deneme 0.2
+    // bandıyla cam görünmez kalmıştı; headless ekran testiyle ×5'e
+    // çekildi). Additive sistemde parlaklık dengesi katman SAYISININ
+    // fonksiyonu — ezber değer yok, sahnede ölçülür.
+    vec3 renk = uRenk * (fresnel * uFresnelKatki + akis * uAkisKatki);
+    float alfa = uAlfa * (fresnel + akis) * altMaske * yanMaske;
+    gl_FragColor = vec4(renk, alfa);
+  }
+`;
+
+// ---- 4c. Malzeme fabrikası + üç mesh'in kuruluşu ---------------
+// Üç malzeme AYNI kaynaktan, farklı sayılarla — Ders 3'ün preset
+// zihniyeti: cihaz farkı kod değil, VERİ.
+function suMalzemesi(o) {
+  return new THREE.ShaderMaterial({
+    // katmanUniformlari uTime'ı paylaşımlı getirir (derinlik uniform'ları
+    // da gelir ama bu shader onları bildirmiyor — three sadece shader'da
+    // BİLDİRİLEN uniform'ları yükler, fazlası zararsızca yok sayılır).
+    uniforms: katmanUniformlari({
+      uCizgiDoku:    { value: cizgiDoku },
+      uRenk:         { value: new THREE.Color(o.renk) },
+      uAlfa:         { value: o.alfa },
+      uFresnelGuc:   { value: o.fresnelGuc },
+      uFresnelKatki: { value: o.fresnelKatki },
+      uAkisKatki:    { value: o.akisKatki },
+      uOlcek1:       { value: o.olcek1 },
+      uHiz1:         { value: o.hiz1 },
+      uOlcek2:       { value: o.olcek2 },
+      uHiz2:         { value: o.hiz2 },
+      uAltFade:      { value: o.altFade },
+      uYanFade:      { value: o.yanFade }
+    }),
+    vertexShader: suVertex,
+    fragmentShader: suFragment,
+    side: THREE.DoubleSide,   // su zarının iki yüzü de var: çanın içi,
+                              // perdenin arkası — tek yüz çizsek kamera
+                              // dolaşınca cihaz "delik" görünürdü
+    transparent: true,
+    depthWrite: false,               // yarı saydamlar birbirini bloke etmesin (Ders 1)
+    blending: THREE.AdditiveBlending // gerekçe blok başında
+  });
+}
+
+// LANCE — cam çubuk: fresnel baskın, akış lifleri yol boyu.
+// Hız seçimi: su yayı ~1.4 sn'de uçuyor → gerçek akış ~0.7 v/sn;
+// iki örnekleme onun altında ve üstünde gezinir.
+const lanceMat = suMalzemesi({
+  renk: 0xbfe3ff, alfa: 1.2,
+  fresnelGuc: 2.0, fresnelKatki: 2.2, akisKatki: 1.6,
+  olcek1: 2.0, hiz1: 0.45, olcek2: 4.0, hiz2: 0.85,
+  altFade: 0.12,   // iniş ucunda hafif kopma — serpintiye devir teslim
+  yanFade: 0.0     // tüp çevresi kapalı: yan fade seam yapar (shader yorumu)
+});
+// İlk geometri boş kabuk: gerçek tüp her kare lanceGuncelle'de kurulur
+// (BLOK 5 sonu) — burada sadece mesh'in iskeleti sahneye giriyor.
+const lanceMesh = new THREE.Mesh(new THREE.BufferGeometry(), lanceMat);
+scene.add(lanceMesh);
+
+// ÇAN — camsı zar: etek erimesi geniş, akış profil boyu hızlı
+// (0.47 sn'lik düşüş v=1'i tarıyor → gerçek akış ~2 v/sn civarı).
+const canMat = suMalzemesi({
+  renk: 0xcfe9ff, alfa: 1.1,
+  fresnelGuc: 1.8, fresnelKatki: 2.2, akisKatki: 1.5,
+  olcek1: 3.0, hiz1: 0.9, olcek2: 6.0, hiz2: 1.7,
+  altFade: 0.35,   // etek: zar liflere ayrılıp damlalaşır (serpinti devralır)
+  yanFade: 0.0     // çevre kapalı — lance ile aynı sebep
+});
+const CAN_R0 = 0.06, CAN_H0 = 1.1, CAN_VR = 1.6;
+const canIlk = canProfilUret(CAN_R0, CAN_H0, CAN_VR);
+// Çan STATİK: her kare rebuild YOK. Lance'tan farkı şu — lance'ın
+// parametresi (θ) her kare değişiyor, çanınki değişmiyor. Yarın
+// timeline "çan yüksekliği 1.1→1.6" derse o KARE canKur çağrılır
+// (BLOK 5 sonunda), geometri bir kez yeniden kurulur, o kadar.
+const canMesh = new THREE.Mesh(new THREE.LatheGeometry(canIlk.profil, 64), canMat);
+canMesh.position.copy(CAN_POS);
+scene.add(canMesh);
+
+// PERDE — düşen film: fresnel düz yüzeyde zaten ölü (cepheden dot(N,V)
+// hep büyük), canlılığı akis taşır → akisKatki en yüksek burada.
+const perdeMat = suMalzemesi({
+  renk: 0xbfe3ff, alfa: 0.9,
+  fresnelGuc: 1.8, fresnelKatki: 1.5, akisKatki: 2.2,
+  olcek1: 2.5, hiz1: 0.55, olcek2: 5.0, hiz2: 1.05,
+  altFade: 0.45,   // alt yarıya doğru film damlalara çözülür
+  yanFade: 0.12    // yanlar: nozul çubuğunun uçlarında film incelir
+});
+const perdeMesh = new THREE.Mesh(perdeGeoUret(), perdeMat);
+perdeMesh.position.copy(PERDE_POS);
+// Kameraya ~30° dönük: tam cepheden fresnel ölür (yüzey düz), tam
+// yandan quad çizgiye iner — arası ikisini de gösterir.
+perdeMesh.rotation.y = THREE.MathUtils.degToRad(-12);
+scene.add(perdeMesh);
+
+// ============================================================
+// BLOK 5 — KENAR SERPİNTİSİ (mini emitter)
+//
+// docs §0 kuralının ikinci yarısı: "gövdede mesh, KOPMA NOKTALARINDA
+// parçacık". Cam zar yere/etek çizgisine varınca gerçekte damlalara
+// patlar — o patlama mesh'in işi değil, parçacığın işi. Üç kopma
+// bölgesi, üç mini emitter:
+//   - lance İNİŞ NOKTASI (point — konumu HER KARE lance'tan güncellenir!)
+//   - çan ETEK ÇEMBERİ  (ring — yarıçap BLOK 3'ün kapalı formundan)
+//   - perde ALT KENARI  (line — 4 m'lik çizgi, perdenin dönüşünü izler)
+//
+// MiniSerpinti = Ders 3 motorunun sadeleşmiş hali: AYNI ölü-slot
+// yığını + kesirli emisyon akümülatörü (anlatım Ders 3 BLOK 4'te),
+// ama üreteç yorumlayıcı yok (parametreler sabit bant), kinematik
+// yok, shape yerine üç bölge tipi var. Toplam kapasite ~1.4k —
+// Ders 3'ün 20k'sının yanında CPU maliyeti yuvarlama hatası.
+// ============================================================
+
+// Serpinti shader'ı: Ders 2 splash'ının benzeri — aAge sönümü +
+// soft fade + additive. Ölü-slot klipleme Ders 3 BLOK 5'ten.
+const serpintiVertex = /* glsl */`
+  attribute float aSize;   // metre — doğumda örneklenmiş boy
+  attribute float aAge;    // 0..1 yaş; 1.0 = ÖLÜ slot
+  uniform float uPixelYariCap;
+  varying float vAge;
+  varying float vViewZ;
+
+  void main() {
+    // Ölü slotu clip dışına at (Ders 3'ün numarası): fragment hiç doğmaz.
+    if (aAge >= 1.0) {
+      gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
+      gl_PointSize = 0.0;
+      vAge = 1.0; vViewZ = 0.0;
+      return;
+    }
+    vAge = aAge;
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    vViewZ = mvPosition.z;
+    // Sıçrayan damla yaşlandıkça hafif dağılır (Ders 2 splash büyümesi).
+    gl_PointSize = aSize * (1.0 + vAge * 1.2) * (uPixelYariCap / -mvPosition.z);
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`;
+
+const serpintiFragment = /* glsl */`
+  uniform sampler2D uDoku;
+  uniform vec3  uRenk;
+  uniform float uAlfa;
+  varying float vAge;
+  varying float vViewZ;
+  ${SOFT_FADE_GLSL}
+
+  void main() {
+    float doku = texture2D(uDoku, gl_PointCoord).a;
+    if (doku < 0.01) discard;
+    float alfa = uAlfa * doku * (1.0 - vAge);  // doğar parlak, ölürken söner
+    alfa *= softFade(vViewZ);                  // zemin kesişimi yumuşak (Ders 2)
+    gl_FragColor = vec4(uRenk, alfa);
+  }
+`;
+
+class MiniSerpinti {
+  // ayar: { bolge, rate, renk } — bolge üç tipten biri:
+  //   { tip:'point', merkez:Vector3 }               (merkez DIŞARIDAN güncellenebilir)
+  //   { tip:'ring',  merkez:Vector3, yaricap }      (yaricap da güncellenebilir)
+  //   { tip:'line',  a:Vector3, b:Vector3 }
+  constructor(ayar) {
+    this.bolge = ayar.bolge;
+    this.rate = ayar.rate;
+
+    // Kapasite = rate × maks ömür × %10 pay (Ders 3'ün formülü).
+    // Ömür bandı 0.3–0.6 s sabit → kapasite küçük kalır.
+    this.kapasite = Math.ceil(ayar.rate * 0.6 * 1.1);
+    const K = this.kapasite;
+
+    this.pos   = new Float32Array(K * 3);
+    this.vel   = new Float32Array(K * 3);       // sadece CPU'da
+    this.yas   = new Float32Array(K);
+    this.omur  = new Float32Array(K);
+    this.canli = new Uint8Array(K);
+    this.aSize = new Float32Array(K);
+    this.aAge  = new Float32Array(K).fill(1);   // herkes ölü başlar (Ders 3)
+
+    this.bosYigin = new Int32Array(K);
+    for (let i = 0; i < K; i++) this.bosYigin[i] = i;
+    this.bosSayisi = K;
+    this.bekleyen = 0;                          // kesirli emisyon akümülatörü
+
+    this.geo = new THREE.BufferGeometry();
+    this.geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3));
+    this.geo.setAttribute('aSize', new THREE.BufferAttribute(this.aSize, 1));
+    this.geo.setAttribute('aAge', new THREE.BufferAttribute(this.aAge, 1));
+    for (const ad of ['position', 'aSize', 'aAge']) {
+      this.geo.attributes[ad].setUsage(THREE.DynamicDrawUsage);
+    }
+
+    this.mat = new THREE.ShaderMaterial({
+      uniforms: katmanUniformlari({
+        uDoku:       { value: damlaDoku },
+        uRenk:       { value: new THREE.Color(ayar.renk) },
+        uAlfa:       { value: 0.5 },
+        // Serpinti ömrünü zeminin hemen üstünde geçirir — Ders 2
+        // splash'ının 0.15 m bandı burada da doğru seçim.
+        uYumusaklik: { value: 0.15 }
+      }),
+      vertexShader: serpintiVertex,
+      fragmentShader: serpintiFragment,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
+
+    this.points = new THREE.Points(this.geo, this.mat);
+    this.points.frustumCulled = false;  // dinamik konumlar — Ders 3'teki cull tuzağı
+    scene.add(this.points);
+  }
+
+  dogur(i) {
+    const b = this.bolge;
+    const hiz = 0.5 + Math.random();            // 0.5–1.5 m/s sıçrama
+    let px, py, pz, dx, dz;                     // konum + yatay dışa yön
+
+    if (b.tip === 'point') {
+      // Lance inişi: tek noktadan her yöne alçak taç.
+      const a = Math.random() * Math.PI * 2;
+      px = b.merkez.x + (Math.random() - 0.5) * 0.08;
+      py = b.merkez.y;
+      pz = b.merkez.z + (Math.random() - 0.5) * 0.08;
+      dx = Math.cos(a); dz = Math.sin(a);
+    } else if (b.tip === 'ring') {
+      // Çan eteği: iniş çemberinin ±%10'luk bandı, radyal dışa sıçrama.
+      const a = Math.random() * Math.PI * 2;
+      const r = b.yaricap * (0.9 + Math.random() * 0.2);
+      px = b.merkez.x + Math.cos(a) * r;
+      py = b.merkez.y;
+      pz = b.merkez.z + Math.sin(a) * r;
+      dx = Math.cos(a); dz = Math.sin(a);       // konumla aynı açı = dışa
+    } else {
+      // Perde alt kenarı: çizgi üzerinde rastgele nokta, çizgiye DİK
+      // yatay sıçrama (film iki yüzünden de damlar → yön rastgele ±).
+      const s = Math.random();
+      px = b.a.x + (b.b.x - b.a.x) * s;
+      py = b.a.y + (b.b.y - b.a.y) * s;
+      pz = b.a.z + (b.b.z - b.a.z) * s;
+      const ex = b.b.x - b.a.x, ez = b.b.z - b.a.z;
+      const inv = 1 / Math.hypot(ex, ez);
+      const taraf = Math.random() < 0.5 ? 1 : -1;
+      dx = ez * inv * taraf; dz = -ex * inv * taraf;
+    }
+
+    this.pos[i * 3 + 0] = px;
+    this.pos[i * 3 + 1] = py + 0.02;            // zeminin hemen üstü (z-fighting)
+    this.pos[i * 3 + 2] = pz;
+    // Hafif dışa + baskın yukarı: çarpan suyun alçak tacı.
+    this.vel[i * 3 + 0] = dx * hiz * 0.5;
+    this.vel[i * 3 + 1] = hiz * (0.7 + 0.3 * Math.random());
+    this.vel[i * 3 + 2] = dz * hiz * 0.5;
+
+    this.aSize[i] = 0.03 + Math.random() * 0.02;  // 3–5 cm damlacık
+    this.yas[i] = 0;
+    this.omur[i] = 0.3 + Math.random() * 0.3;     // 0.3–0.6 s
+    this.canli[i] = 1;
+    this.aAge[i] = 0;
+  }
+
+  step(dt) {
+    // Kesirli emisyon akümülatörü (Ders 3 BLOK 4 anlatımı).
+    this.bekleyen += this.rate * dt;
+    let dogacak = Math.floor(this.bekleyen);
+    this.bekleyen -= dogacak;
+    if (dogacak > 0) {
+      while (dogacak-- > 0 && this.bosSayisi > 0) {
+        this.dogur(this.bosYigin[--this.bosSayisi]);
+      }
+      this.geo.attributes.aSize.needsUpdate = true;
+    }
+
+    // Fizik + ölüm (ölü-slot yığını — Ders 3'ün aynısı, sadeleşmiş).
+    const K = this.kapasite;
+    const pos = this.pos, vel = this.vel, yas = this.yas, omur = this.omur;
+    for (let i = 0; i < K; i++) {
+      if (!this.canli[i]) continue;
+      vel[i * 3 + 1] -= G * dt;
+      pos[i * 3 + 0] += vel[i * 3 + 0] * dt;
+      pos[i * 3 + 1] += vel[i * 3 + 1] * dt;
+      pos[i * 3 + 2] += vel[i * 3 + 2] * dt;
+      yas[i] += dt;
+      if (yas[i] >= omur[i] || pos[i * 3 + 1] < 0) {
+        this.canli[i] = 0;
+        this.aAge[i] = 1;
+        this.bosYigin[this.bosSayisi++] = i;
+      } else {
+        this.aAge[i] = yas[i] / omur[i];
+      }
+    }
+    this.geo.attributes.position.needsUpdate = true;
+    this.geo.attributes.aAge.needsUpdate = true;
+  }
+
+  prewarm(sure = 1) {
+    const h = 1 / 60;
+    for (let t = 0; t < sure; t += h) this.step(h);
+  }
+}
+
+// --- Üç bölge, üç serpinti ---
+// Rate'ler docs §1 hissiyatına göre: perde 4 m'lik kenarıyla en çok,
+// nokta iniş en az damlar. Kapasiteler: 330 + 462 + 594 ≈ 1.4k.
+const serpintiLance = new MiniSerpinti({
+  bolge: { tip: 'point', merkez: new THREE.Vector3() },  // her kare lance doldurur
+  rate: 500, renk: '#dceeff'
+});
+const serpintiCan = new MiniSerpinti({
+  bolge: { tip: 'ring', merkez: CAN_POS.clone(), yaricap: canIlk.etekYaricap },
+  rate: 700, renk: '#e4f2ff'
+});
+// Perde alt kenarı DÜNYA uzayında: quad'ın yerel alt köşeleri mesh
+// matrisinden geçirilir — perdenin -12°'lik dönüşünü elle kopyalamak
+// yerine matrise yaptırıyoruz (tek doğruluk kaynağı = mesh'in kendisi).
+perdeMesh.updateMatrixWorld(true);
+const perdeAltA = new THREE.Vector3(-PERDE_GENISLIK / 2, -PERDE_YUKSEKLIK / 2, 0)
+  .applyMatrix4(perdeMesh.matrixWorld);
+const perdeAltB = new THREE.Vector3( PERDE_GENISLIK / 2, -PERDE_YUKSEKLIK / 2, 0)
+  .applyMatrix4(perdeMesh.matrixWorld);
+const serpintiPerde = new MiniSerpinti({
+  bolge: { tip: 'line', a: perdeAltA, b: perdeAltB },
+  rate: 900, renk: '#dceeff'
+});
+
+const serpintiler = [serpintiLance, serpintiCan, serpintiPerde];
+
+// --- Cihaz güncelleme fonksiyonları: geometri + serpinti BİRLİKTE ---
+
+// lanceGuncelle: her kare çağrılır. θ değişince parabol değişir →
+// tüp YENİDEN kurulur. İki öğretici nokta:
+//   1) 48 segmentlik tüp rebuild'i UCUZDUR (~640 vertex + Frenet
+//      çerçeveleri) — "mesh de veri-güdümlü olabilir" dersinin kanıtı.
+//      Parçacıkta konum attribute'unu güncelliyorduk; mesh'te geometrinin
+//      kendisini güncelliyoruz, zihniyet aynı.
+//   2) ESKİ geometriyi dispose() etmeyi UNUTMA: JS tarafında referans
+//      kopunca çöp toplayıcı nesneyi alır ama GPU'daki vertex buffer'ı
+//      ancak dispose() serbest bırakır. Unutulursa saniyede 60 buffer
+//      sızar — dakikada yüzlerce MB, sekme sessizce ölür.
+function lanceGuncelle(thetaDeg) {
+  const { egri, inis } = lanceEgrisiUret(LANCE_V0, thetaDeg);
+  const yeniGeo = new THREE.TubeGeometry(egri, LANCE_ORNEK, 0.045, 12, false);
+  uvKanonTakas(yeniGeo);                       // BLOK 3: v = yol ekseni
+  lanceMesh.geometry.dispose();                // GPU bellek sızıntısı dersi!
+  lanceMesh.geometry = yeniGeo;
+  serpintiLance.bolge.merkez.copy(inis);       // iniş serpintisi yayı takip eder
+}
+
+// canKur: çan STATİK olduğu için döngüde ÇAĞRILMAZ — timeline/konsol
+// parametre değiştirdiğinde bir kez çağrılır (lance farkının kanıtı).
+// Örn: DERS4.can.kur(0.06, 1.6, 2.2) → daha yüksek, daha geniş çan.
+function canKur(r0, h0, vr) {
+  const { profil, etekYaricap } = canProfilUret(r0, h0, vr);
+  canMesh.geometry.dispose();
+  canMesh.geometry = new THREE.LatheGeometry(profil, 64);
+  serpintiCan.bolge.yaricap = etekYaricap;     // halka serpinti yeni eteğe oturur
+  return etekYaricap;
+}
+
+// İlk kurulum: lance θ=45° ile doğsun, sonra serpintiler 1 s ön-ısınsın
+// (prewarm gerekçesi Ders 3 BLOK 4'te — sahne ilk kareden dolu açılır).
+// Sıra önemli: prewarm'dan ÖNCE lance inişi yerine oturmalı, yoksa
+// point serpintisi ilk saniyesini (0,0,0)'da doğarak harcar.
+lanceGuncelle(45);
+for (const s of serpintiler) s.prewarm(1);
+
+// ============================================================
+// BLOK 6 — SOFT PARTICLES + BLOOM (Ders 2-3'ten)
+// Depth prepass + DepthTexture kurulumunun satır satır anlatımı
+// Ders 2 BLOK 4 ve 6'da. Bu dersteki fark gizlenecekler listesi:
+// 3 serpinti Points'i + 3 SU MESH'İ. Mesh'ler neden gizleniyor?
+//   1) Yarı saydamlar derinlik fotoğrafına girmez (Ders 2 kuralı) —
+//      girseler serpinti damlaları cam yüzeye yaklaşırken ona karşı
+//      da fade olurdu; oysa damla camın ÖNÜNDE serbestçe uçmalı.
+//   2) Su mesh'inin zemin kesişimi zaten UV alt-fade ile eriyor
+//      (BLOK 4) — derinlik verisine ihtiyacı yok.
+// Zemin fotoğrafta KALIR: serpinti ona karşı yumuşakça sönecek.
+// ============================================================
+
+const dbBoyut = new THREE.Vector2();
+renderer.getDrawingBufferSize(dbBoyut);
+const depthTarget = new THREE.WebGLRenderTarget(dbBoyut.x, dbBoyut.y, {
+  depthBuffer: true,
+  stencilBuffer: false
+});
+depthTarget.depthTexture = new THREE.DepthTexture(dbBoyut.x, dbBoyut.y);
+depthTarget.depthTexture.format = THREE.DepthFormat;
+depthTarget.depthTexture.type = THREE.UnsignedIntType;
+
+ortakUniformlar.uDerinlikDoku.value = depthTarget.depthTexture;
+
+const katmanlar = [
+  lanceMesh, canMesh, perdeMesh,
+  ...serpintiler.map(s => s.points)
+];
+
+function derinlikOnGecisi() {
+  for (const k of katmanlar) k.visible = false;
+  renderer.setRenderTarget(depthTarget);
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(null);
+  for (const k of katmanlar) k.visible = true;
+}
+
+function cozunurlukGuncelle() {
+  renderer.getDrawingBufferSize(dbBoyut);
+  depthTarget.setSize(dbBoyut.x, dbBoyut.y);
+  ortakUniformlar.uCozunurluk.value.copy(dbBoyut);
+  ortakUniformlar.uPixelYariCap.value = dbBoyut.y * 0.5;
+}
+cozunurlukGuncelle();
+
+// Bloom zinciri (Ders 2 BLOK 6'dan aynen, aynı 0.8/0.5/0.2 ayarı) —
+// cam suyun fresnel kenarları additive toplandığı yerde eşiği aşar,
+// bloom cam kenarına ışıltı halesi asar: gece çeşme camının imzası.
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloomPass = new UnrealBloomPass(
+  new THREE.Vector2(innerWidth, innerHeight),
+  0.8,   // strength
+  0.5,   // radius
+  0.2    // threshold — koyu fon temiz kalır, sadece su parlar
+);
+composer.addPass(bloomPass);
+composer.addPass(new OutputPass());  // tone mapping + linear→sRGB (Ders 2)
+
+// ============================================================
+// BLOK 7 — RENDER DÖNGÜSÜ
+// Kare planı: dt ölç (clamp) → uTime → lance açısı sin (35–55°,
+// ~9 s periyot) + eğri/tüp rebuild + iniş noktası → 3 serpinti
+// adımı → derinlik ön-geçişi → composer → fps.
+// Sıra önemli (Ders 3 dersi): lance ÖNCE, serpinti SONRA — bu
+// karenin damlaları bu karenin iniş noktasında doğsun.
+// ============================================================
+
+const clock = new THREE.Clock();
+let simZaman = 0;
+let frames = 0, fpsTimer = 0;
+const fpsEl = document.getElementById('fps');
+
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 1 / 20);  // dev dt sıçramasını kırp (Ders 1)
+  simZaman += dt;
+  ortakUniformlar.uTime.value = simZaman;         // doku kaydırmanın saati
+
+  // Lance açısı 35–55° arasında yavaş sin ile gezinir: mesh'in de
+  // "veri-güdümlü" olduğunu her kare kanıtlayan hareket. (Gerçek
+  // lance'lar tam böyle tarama yapar — leaper efektinin atası.)
+  const theta = 45 + 10 * Math.sin(2 * Math.PI * simZaman / 9);
+  lanceGuncelle(theta);
+
+  for (const s of serpintiler) s.step(dt);
+  controls.update();
+
+  derinlikOnGecisi();   // 1) parçacıksız+meshsiz sahnenin derinlik fotoğrafı
+  composer.render();    // 2) asıl kare: sahne → bloom → sRGB çıktı
+
+  frames++; fpsTimer += dt;
+  if (fpsTimer >= 1) { fpsEl.textContent = frames; frames = 0; fpsTimer = 0; }
+});
+
+// Resize zinciri (Ders 2'den): composer + derinlik hedefi + uniform'lar.
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+  cozunurlukGuncelle();
+});
+
+// Debug kancası: konsoldan canlı dürtme.
+// Örn: DERS4.can.kur(0.06, 1.6, 2.2)                      → çanı büyüt (tek rebuild)
+//      DERS4.perde.mat.uniforms.uHiz1.value = 2.0          → perde hızlı aksın
+//      DERS4.lance.mat.uniforms.uFresnelGuc.value = 1.0    → rim'i yay, cam hissini boz
+//      DERS4.can.mat.uniforms.uAltFade.value = 0.0         → etek erimesini kapat, sert kenarı GÖR
+//      DERS4.serpintiler[0].rate = 3000                    → iniş serpintisini coştur
+window.DERS4 = {
+  lance: { mesh: lanceMesh, mat: lanceMat, serpinti: serpintiLance,
+           guncelle: lanceGuncelle, egriUret: lanceEgrisiUret },
+  can:   { mesh: canMesh, mat: canMat, serpinti: serpintiCan,
+           kur: canKur, profilUret: canProfilUret },
+  perde: { mesh: perdeMesh, mat: perdeMat, serpinti: serpintiPerde },
+  serpintiler,
+  renderer, scene, camera, composer, bloomPass, depthTarget, ortakUniformlar
+};
+</script>
+</body>
+</html>

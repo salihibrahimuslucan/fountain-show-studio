@@ -1,0 +1,803 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>Ders 3 — Cihazlar (cihaz = veri, motor = tek)</title>
+<style>
+  body { margin: 0; overflow: hidden; background: #000; }
+  #info {
+    position: fixed; top: 8px; left: 8px;
+    color: #8fd3ff; font: 13px/1.5 Consolas, monospace;
+    text-shadow: 0 1px 2px #000;
+  }
+</style>
+</head>
+<body>
+<div id="info">Ders 3 — cihazlar · x=-6&rarr;+6: düz jet &middot; geyser &middot; yelpaze &middot; robo · sol tık: döndür · teker: zoom · <span id="fps">-</span> fps</div>
+
+<!-- importmap: "three" adını CDN'deki gerçek dosyaya eşler.
+     Kurulum yok, npm yok — tarayıcı modülü doğrudan internetten çeker. -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+// ============================================================
+// DERS 3 — CİHAZ = VERİ, MOTOR = TEK
+//
+// Ders 1-2'de "bir jet" yazdık: fizik, doku, soft particles, bloom.
+// Ama katalogda bir cihaz yok, ONLARCA cihaz var — düz nozul, geyser,
+// yelpaze, hareketli jet... Her biri için ayrı kod yazarsak motor
+// büyüdükçe çöker. Bu dersin tezi:
+//
+//   CİHAZ = VERİ (JSON preset)  ·  MOTOR = TEK (bir sınıf, hepsini çizer)
+//
+// Aynı motor 4 farklı arketipi tek sahnede, sadece preset farkıyla
+// canlandıracak. Yarın timeline ve editör de AYNI veriyi okuyacak;
+// katalogdaki her ürün bir JSON satırı olarak eklenecek.
+//
+// Üç yeni motor kavramı (üçü de docs/2026-07-14-cihaz-render-desenleri.md
+// araştırmasından, three.quarks/nebula desenleri):
+//   1) Kesirli emisyon akümülatörü  → kare hızından bağımsız debi
+//   2) Ömür + ölü-slot havuzu       → gerçek emitter (respawn hilesi değil)
+//   3) Doğum-anı örnekleme          → titremesiz, tekrarlanabilir rastgelelik
+// Artı: pan/tilt pivot zinciri + slew-rate (AquaROBO) ve kırbaç etkisi.
+// ============================================================
+
+// ============================================================
+// BLOK 1 — SAHNE KURULUMU (Ders 2'den)
+// Satır satır anlatım Ders 1'de. Ders 3 farkları: 4 cihaz yan yana
+// dizileceği için zemin dairesi 9 → 12 m, kamera geriye alındı,
+// fog da sahne genişlediği için biraz açıldı (15/45 → 20/60).
+// ============================================================
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x050810);
+scene.fog = new THREE.Fog(0x050810, 20, 60);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(11, 5, 13);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 2, 0);
+controls.enableDamping = true;
+
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(12, 48),
+  new THREE.MeshStandardMaterial({ color: 0x0a1622, roughness: 0.3, metalness: 0.2 })
+);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+
+scene.add(new THREE.AmbientLight(0x334455, 0.8));
+// Lamba biraz yukarı + menzil geniş: sahne artık 24 m çapında.
+const lamp = new THREE.PointLight(0x5599ff, 60, 40);
+lamp.position.set(0, 5, 0);
+scene.add(lamp);
+
+const G = 9.81;  // yerçekimi — motorun tek fizik sabiti
+
+// ============================================================
+// BLOK 2 — SPRITE DOKU (Ders 2'den, sadece damlaDoku)
+// Prosedürel doku üretiminin anlatımı Ders 2 BLOK 2'de. Bu derste
+// sis dokusu YOK: splash/sis katmanlarının cihazlara entegrasyonu
+// sonraki iş — bugün odak cihaz motorunun kendisi.
+// ============================================================
+
+function dokuUret(ciz) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  ciz(c.getContext('2d'), 128);
+  return new THREE.CanvasTexture(c);  // linear kalır: renk değil YOĞUNLUK maskesi
+}
+
+const damlaDoku = dokuUret((ctx, S) => {
+  const g = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  g.addColorStop(0.0,  'rgba(255,255,255,1)');
+  g.addColorStop(0.35, 'rgba(255,255,255,0.75)');
+  g.addColorStop(1.0,  'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, S, S);
+});
+
+// ============================================================
+// BLOK 3 — CİHAZ PRESET'LERİ (dersin kalbi #1)
+//
+// Cihaz kütüphanesi kod DEĞİL, VERİ. Aşağıdaki nesne elle yazılmış
+// JSON — motor bunu okur, timeline yarın bunu okuyacak, editör bunu
+// düzenleyecek. Bugün 4 preset; yarın katalogdaki her ürün buraya
+// bir kayıt olarak eklenir, motora TEK SATIR dokunulmaz.
+//
+// Üreteç deseni (docs §2, three.quarks'tan kopyalanan tasarım):
+//   { type:'const', value:v }  → hep aynı değer
+//   { type:'range', a, b }     → a..b arası; parçacık başına doğumda
+//                                BİR KEZ örneklenir (BLOK 4'te neden)
+// Yarın 'curve' (PiecewiseBezier) da eklenir — motor tarafında sadece
+// ornekle() fonksiyonuna bir dal daha demek.
+//
+// NOT (bütçe): rate'ler arketip reçetesinden (docs §1) alınıp toplam
+// ~20k parçacık kapasitesine ölçeklendi (hedefler 2200/5000/2600/1800
+// idi; 1900/4000/2300/1500 ile kapasite toplamı ≈ 19.8k — CPU bütçesi).
+// ============================================================
+
+const PRESETLER = {
+
+  // COMET / DÜZ JET — yarı şeffaf kolon, tepede beyazlaşan kuyruk.
+  // Ders 1-2'deki jetin ta kendisi, artık veri olarak.
+  duz_jet: {
+    archetype: 'straight_jet',
+    konum: [-6, 0, 0],
+    shape:    { type: 'point', angle: 0.05 },          // dar koni (~3°)
+    emission: { rate: { type: 'const', value: 1900 } },
+    particle: {
+      speed: { type: 'range', a: 10.0, b: 12.0 },      // m/s → tepe ~6 m
+      life:  { type: 'range', a: 2.0,  b: 2.3  },      // s — balistik uçuşla uyumlu
+      size:  { type: 'const', value: 0.07 },           // m
+      color: '#bfe3ff',
+      alpha: 0.55,
+      aeration: 0.35    // hafif köpüklü: beyazlık ağırlıkla hızdan gelir (tepe)
+    }
+  },
+
+  // GEYSER — kalın, KAR BEYAZI, opak, kabarcıklı kütle (docs §1).
+  // Görsel imzanın veri karşılığı: geniş disk ağız + düşük hız +
+  // ÇOK yüksek doğum + iri sprite + yüksek aeration.
+  // AYAR DERSİ: additive sistemde "opaklık" alfa ile DEĞİL yoğunlukla
+  // kurulur. İlk deneme (size 0.16, alpha 0.7, aeration 0.9) 4900 iri
+  // sprite'ın parlaklığını TOPLAYIP bloom'u doyurdu — geyser beyaz
+  // topa döndü. Aşağıdaki değerler headless ekran testiyle bulundu:
+  // kütle hissi doğum oranından, beyazlık aeration'dan geliyor; alfa
+  // sadece "toplam ne kadar ışık" düğmesi ve additive'de küçük kalmalı.
+  geyser: {
+    archetype: 'geyser',
+    konum: [-2, 0, 0],
+    shape:    { type: 'disc', radius: 0.28, angle: 0.22 },  // geniş ağız, geniş koni
+    emission: { rate: { type: 'const', value: 4000 } },
+    particle: {
+      speed: { type: 'range', a: 5.5, b: 7.0 },        // alçak ve tok
+      life:  { type: 'range', a: 1.2, b: 1.5 },
+      size:  { type: 'const', value: 0.11 },           // iri (comet'in ~2 katı) ama doyurmayacak kadar
+      color: '#e8f4ff',                                // beyaza yakın
+      alpha: 0.2,                                      // additive: yoğunluk zaten 4000/s'den geliyor
+      aeration: 0.75    // yapısal köpük: hızdan bağımsız beyazlık
+    },
+    render: { yumusaklik: 0.5 }   // iri sprite'lar zemine daha geniş bantla erisin
+  },
+
+  // YELPAZE / FAN — TEK DÜZLEMDE açılan su perdesi ağzı.
+  // Öğretici nokta (docs §2): hazır kütüphanelerin cone shape'i bunu
+  // VEREMEZ — quarks'ın `arc` parametresi koninin ÇEVRESİNDEN dilim
+  // keser (pasta dilimi gibi), düzlemsel yelpaze çıkmaz. O yüzden
+  // kendi `fan` shape'imiz: fanAngle düzlem İÇİ açılım, fanThickness
+  // düzlem DIŞI incecik sapma (su filmi kalınlığı hissi).
+  yelpaze: {
+    archetype: 'fan',
+    konum: [2, 0, 0],
+    donusYDeg: 45,      // yelpaze düzlemi kameraya ~45° dönük — cepheden
+                        // bakınca çizgi, kenardan bakınca hiçlik olurdu
+    shape:    { type: 'fan', fanAngle: 1.3, fanThickness: 0.05 },  // ~75° açılım
+    emission: { rate: { type: 'const', value: 2300 } },
+    particle: {
+      speed: { type: 'range', a: 8.0, b: 9.5 },
+      life:  { type: 'range', a: 1.6, b: 1.9 },
+      size:  { type: 'const', value: 0.06 },
+      color: '#bfe3ff',
+      alpha: 0.55,
+      aeration: 0.25    // ince film az köpürür; kenar beyazlığı hızdan gelsin
+    }
+  },
+
+  // ROBO — 2 eksen hareketli jet (AquaROBO ailesi). Dar comet hüzmesi
+  // + kinematics: pan sin süpürme, tilt yavaş sin gezinme. Motor bu
+  // veriyi BLOK 6'daki rig'e bağlar — hareket de kod değil veri.
+  robo: {
+    archetype: 'moving_jet_2axis',
+    konum: [6, 0, 0],
+    shape:    { type: 'point', angle: 0.03 },           // çok dar: hüzme okunsun
+    emission: { rate: { type: 'const', value: 1500 } },
+    particle: {
+      speed: { type: 'range', a: 11.0, b: 12.5 },
+      life:  { type: 'range', a: 1.9,  b: 2.2  },
+      size:  { type: 'const', value: 0.06 },
+      color: '#bfe3ff',
+      alpha: 0.55,
+      aeration: 0.3
+    },
+    // Docs §4 OFL eksen şemasının ders için sadeleşmiş hali. Açılar
+    // derece (veri insana okunur kalsın), motor radyana çevirir.
+    kinematics: {
+      maxSpeed: 60,                                  // derece/sn — mekanik slew sınırı
+      pan:  { genlik: 50, periyot: 8 },              // ±50° sin süpürme, ~8 s
+      tilt: { merkez: 18, genlik: 8, periyot: 13 }   // 10°–26° arası yavaş gezinme
+    }
+  }
+};
+
+// ============================================================
+// BLOK 4 — CİHAZ MOTORU (dersin kalbi #2)
+//
+// Tek sınıf: preset alır, kendi Points + ShaderMaterial + parçacık
+// havuzunu kurar. Ders 1-2'nin "sabit N damla + yere değince respawn"
+// hilesi TEK sürekli jet için yeterliydi; genel cihazda üç şey kırılır:
+//   - debi cihazdan cihaza değişir (rate artık bir parametre),
+//   - ömür konumdan bağımsızdır (sis 5 s yaşar ama yere hiç değmez),
+//   - doğum noktası hareket eder (robo döner!).
+// Çözüm GERÇEK EMITTER modeli — üç kavramıyla:
+//
+// 1) KESİRLİ EMİSYON AKÜMÜLATÖRÜ (quarks deseni, docs §2):
+//    bekleyen += rate*dt; dogacak = floor(bekleyen); bekleyen -= dogacak
+//    Neden: 60 fps'te 1900/s = kare başına 31.67 parçacık. floor'u
+//    biriktirmeden alsan her kare 31 doğar → debi %2 eksik, üstelik
+//    fps düşünce debi de düşer. Kesir bir sonraki kareye devredilince
+//    debi kare hızından BAĞIMSIZ pürüzsüz akar. İleride AquaVARIO'da
+//    rate'i timeline sürecek — akümülatör o gün de aynen çalışır.
+//
+// 2) ÖMÜR + ÖLÜ-SLOT YIĞINI:
+//    Parçacık age > life VEYA y < 0 olunca ölür; indeksi "boş yığına"
+//    geri döner, sonraki doğum yığından slot çeker. Ölüm işareti:
+//    aAge = 1.0 → vertex shader o slotu klipler (BLOK 5). Neden bu
+//    yöntem: attribute dizisi sabit boyutlu kalır (GPU bunu sever),
+//    doğum/ölüm sadece indeks alışverişi — bellek tahsisi sıfır.
+//
+// 3) DOĞUM-ANI ÖRNEKLEME (quarks IntervalValue dersi, docs §2):
+//    range üreteci parçacık başına BİR KEZ, doğum anında örneklenir
+//    ve ömür boyu sabittir. Her karede yeniden örneklesen parçacık
+//    titrer; doğumda bir kez örnekleyince önizleme hem titremesiz
+//    hem tekrarlanabilir (aynı seed = aynı şov — ileride önemli).
+// ============================================================
+
+// ---- 4a. Üreteç yorumlayıcı ----------------------------------
+// Preset'teki {type,...} nesnesini sayıya çevirir. Registry-dispatch
+// deseninin en küçük hali: yeni üreteç tipi = buraya bir dal.
+function ornekle(u) {
+  if (u.type === 'const') return u.value;
+  if (u.type === 'range') return u.a + Math.random() * (u.b - u.a);
+  throw new Error('bilinmeyen üreteç tipi: ' + u.type);
+}
+// Kapasite hesabı için üretecin tavan değeri (range'de b, const'ta value).
+function uretecMax(u) {
+  return u.type === 'const' ? u.value : Math.max(u.a, u.b);
+}
+
+// ---- 4b. Doğum geometrisi yardımcıları ------------------------
+// Modül seviyesinde geçici vektörler: her doğumda new THREE.Vector3()
+// açmak GC'yi kare başına binlerce kez dürter — bir kez aç, hep kullan.
+const _wPos  = new THREE.Vector3();     // nozulun dünya konumu (kare başına 1 kez)
+const _wQuat = new THREE.Quaternion();  // nozulun dünya yönelimi
+const _pozL  = new THREE.Vector3();     // doğum konumu (yerel → dünya)
+const _yonL  = new THREE.Vector3();     // doğum yönü   (yerel → dünya)
+
+// Koni içinde rastgele yön (yerel uzay, koni ekseni +Y).
+// Kutup açısında sqrt: açıyı düz rastgele seçsen yönler koninin
+// merkezinde yığılır (alan küçük açıda dar) — sqrt alan-düzgün dağıtır.
+function yonKoni(aciMax, hedef) {
+  const a = Math.random() * Math.PI * 2;          // azimut: tam düzgün
+  const t = aciMax * Math.sqrt(Math.random());    // kutup: alan-düzgün
+  const st = Math.sin(t);
+  hedef.set(Math.sin(a) * st, Math.cos(t), Math.cos(a) * st);
+}
+
+// ---- 4c. CihazSistemi -----------------------------------------
+class CihazSistemi {
+  constructor(preset) {
+    this.preset = preset;
+
+    // --- Pan/tilt rig zinciri (anlatım BLOK 6'da) ---
+    // Kinematics'i olmayan cihazlarda da zincir kurulur ama kıpırdamaz:
+    // motor tek tip kalır, "hareketli cihaz" özel durum değildir.
+    this.base      = new THREE.Object3D();   // preset konumu (kaide)
+    this.panPivot  = new THREE.Object3D();   // rotation.y döner
+    this.tiltPivot = new THREE.Object3D();   // rotation.x eğilir
+    this.nozul     = new THREE.Object3D();   // doğum noktası/yönü buradan okunur
+    this.base.add(this.panPivot);
+    this.panPivot.add(this.tiltPivot);
+    this.tiltPivot.add(this.nozul);
+    this.base.position.fromArray(preset.konum);
+    if (preset.donusYDeg) {                  // yelpazenin 45°'si buradan
+      this.base.rotation.y = THREE.MathUtils.degToRad(preset.donusYDeg);
+    }
+    scene.add(this.base);
+
+    // Slew-rate durumu (BLOK 6): açılar radyan olarak burada yaşar.
+    this.panAci = 0;
+    this.tiltAci = preset.kinematics
+      ? THREE.MathUtils.degToRad(preset.kinematics.tilt.merkez)
+      : 0;
+    this.tiltPivot.rotation.x = this.tiltAci;
+
+    // --- Kapasite: en kötü durumda kaç parçacık aynı anda yaşar? ---
+    // Kararlı durumda canlı sayı = rate × ortalama ömür. Tavan için
+    // maksimum ömür + %10 güvenlik payı (kesirli doğum dalgalanması).
+    const maxRate = uretecMax(preset.emission.rate);
+    const maxLife = uretecMax(preset.particle.life);
+    this.kapasite = Math.ceil(maxRate * maxLife * 1.1);
+    const K = this.kapasite;
+
+    // --- CPU tarafı diziler ---
+    this.pos   = new Float32Array(K * 3);  // konum (attribute ile paylaşılır)
+    this.vel   = new Float32Array(K * 3);  // hız — sadece CPU'da
+    this.yas   = new Float32Array(K);      // saniye
+    this.omur  = new Float32Array(K);      // saniye (doğumda örneklenir)
+    this.canli = new Uint8Array(K);        // 1 = yaşıyor (fizik döngüsü filtresi)
+
+    // --- GPU attribute dizileri ---
+    this.aSize = new Float32Array(K);      // metre — doğumda örneklenmiş boy
+    this.aVy   = new Float32Array(K);      // dikey hız (köpük hilesi, Ders 2)
+    this.aAge  = new Float32Array(K).fill(1);  // 0..1 yaş; 1 = ÖLÜ → herkes ölü başlar
+
+    // --- Ölü-slot yığını: başta bütün indeksler boş ---
+    this.bosYigin = new Int32Array(K);
+    for (let i = 0; i < K; i++) this.bosYigin[i] = i;
+    this.bosSayisi = K;
+    this.bekleyen = 0;   // kesirli emisyon akümülatörü
+
+    // --- Geometri + malzeme ---
+    this.geo = new THREE.BufferGeometry();
+    this.geo.setAttribute('position', new THREE.BufferAttribute(this.pos, 3));
+    this.geo.setAttribute('aSize', new THREE.BufferAttribute(this.aSize, 1));
+    this.geo.setAttribute('aVy', new THREE.BufferAttribute(this.aVy, 1));
+    this.geo.setAttribute('aAge', new THREE.BufferAttribute(this.aAge, 1));
+    // Dördü de her kare (aSize doğum olan karelerde) değişir → dynamic ipucu.
+    for (const ad of ['position', 'aSize', 'aVy', 'aAge']) {
+      this.geo.attributes[ad].setUsage(THREE.DynamicDrawUsage);
+    }
+
+    const p = preset.particle;
+    this.mat = new THREE.ShaderMaterial({
+      uniforms: katmanUniformlari({
+        uDoku:       { value: damlaDoku },
+        uRenk:       { value: new THREE.Color(p.color) },
+        uAlfa:       { value: p.alpha },
+        uAeration:   { value: p.aeration },   // BLOK 5'teki genelleme #1
+        // Soft-fade bandı cihaz başına preset'ten; varsayılan Ders 2'nin 0.4'ü.
+        uYumusaklik: { value: (preset.render && preset.render.yumusaklik) || 0.4 }
+      }),
+      vertexShader: cihazVertex,
+      fragmentShader: cihazFragment,
+      transparent: true,
+      depthWrite: false,                 // yarı saydamlar birbirini bloke etmesin (Ders 1)
+      blending: THREE.AdditiveBlending   // üst üste binen su parlar → bloom ödüllendirir
+    });
+
+    this.points = new THREE.Points(this.geo, this.mat);
+    // KRİTİK: three, Points'in bounding sphere'ini İLK konum dizisinden
+    // hesaplar. Bizimki başta tüm sıfır → sıfır yarıçaplı küre → kamera
+    // biraz dönünce three "ekran dışında" sanıp TÜM cihazı cull eder.
+    // Konumlar her kare değiştiği için kürenin peşinden koşmak yerine
+    // frustum culling'i bu nesnede kapatmak doğru çözüm.
+    this.points.frustumCulled = false;
+    scene.add(this.points);
+  }
+
+  // --- Tek parçacık doğumu: i slotuna yaz ---
+  // _wPos/_wQuat step() tarafından kare başına BİR kez doldurulur
+  // (getWorldPosition her doğumda çağrılsa matris çarpımı boşa tekrarlanır).
+  dogur(i) {
+    const p = this.preset.particle;
+    const s = this.preset.shape;
+
+    // DOĞUM-ANI ÖRNEKLEME: range üreteçleri burada, bir kez.
+    const hiz  = ornekle(p.speed);
+    this.omur[i] = ornekle(p.life);
+    // Boy çeşitliliği: tekdüze boy "nokta ordusu" hissi verir (Ders 2
+    // dersi). Preset'in size üreteci × motorun 0.7–1.3 sanat çarpanı.
+    // (İstenirse preset size'ı range yapıp çarpanı 1'e çekmek de aynı iş.)
+    this.aSize[i] = ornekle(p.size) * (0.7 + Math.random() * 0.6);
+
+    // --- Shape: YEREL doğum konumu + yönü (nozul uzayı, +Y ileri) ---
+    _pozL.set(0, 0, 0);
+    if (s.type === 'point') {
+      // Tek noktadan koni: Ders 1'in spread'inin genel hali.
+      yonKoni(s.angle, _yonL);
+    } else if (s.type === 'disc') {
+      // Geniş ağız: yarıçap içinde rastgele doğum noktası + koni hız.
+      // sqrt yine alan-düzgünlük için — yoksa merkez aşırı yoğun olur.
+      const a = Math.random() * Math.PI * 2;
+      const r = s.radius * Math.sqrt(Math.random());
+      _pozL.set(Math.cos(a) * r, 0, Math.sin(a) * r);
+      yonKoni(s.angle, _yonL);
+    } else if (s.type === 'fan') {
+      // KENDİ shape'imiz (docs §2): düzlem İÇİ açı phi ∈ ±fanAngle/2
+      // (yelpazenin açılımı, yerel X ekseni boyunca), düzlem DIŞI açı
+      // psi ∈ ±fanThickness/2 (film kalınlığı, yerel Z'ye minicik sapma).
+      const phi = (Math.random() - 0.5) * s.fanAngle;
+      const psi = (Math.random() - 0.5) * s.fanThickness;
+      // Küresel kurulum: önce +Y'yi düzlem içinde phi kadar yatır,
+      // sonra düzlemden psi kadar çıkar. Birim vektör garantili.
+      _yonL.set(
+        Math.sin(phi) * Math.cos(psi),   // düzlem içi bileşen
+        Math.cos(phi) * Math.cos(psi),   // yukarı bileşen
+        Math.sin(psi)                    // düzlem dışı incecik sapma
+      );
+    } else {
+      throw new Error('bilinmeyen shape tipi: ' + s.type);
+    }
+
+    // --- Yerel → DÜNYA çevrimi ---
+    // Parçacıklar dünya uzayında yaşar (kırbaç etkisinin şartı, BLOK 6):
+    // doğum konumu/yönü nozulun dünya matrisiyle çevrilir, sonrası
+    // nozuldan tamamen bağımsız balistiktir.
+    _pozL.applyQuaternion(_wQuat).add(_wPos);
+    _yonL.applyQuaternion(_wQuat);
+
+    this.pos[i * 3 + 0] = _pozL.x;
+    this.pos[i * 3 + 1] = _pozL.y;
+    this.pos[i * 3 + 2] = _pozL.z;
+    this.vel[i * 3 + 0] = _yonL.x * hiz;
+    this.vel[i * 3 + 1] = _yonL.y * hiz;
+    this.vel[i * 3 + 2] = _yonL.z * hiz;
+
+    this.yas[i] = 0;
+    this.canli[i] = 1;
+    this.aAge[i] = 0;
+    this.aVy[i] = this.vel[i * 3 + 1];
+  }
+
+  // --- Bir simülasyon adımı: emisyon + fizik + attribute bayrakları ---
+  step(dt) {
+    // 1) KESİRLİ EMİSYON AKÜMÜLATÖRÜ
+    // rate de bir üreteç: bugün const, yarın timeline'dan gelen curve.
+    // (Emitter parametresi olduğundan KARE başına örneklenir; parçacık
+    // parametreleri ise DOĞUM başına — ikisi farklı ölçek, karıştırma.)
+    const rate = ornekle(this.preset.emission.rate);
+    this.bekleyen += rate * dt;
+    let dogacak = Math.floor(this.bekleyen);
+    this.bekleyen -= dogacak;
+
+    if (dogacak > 0) {
+      // Nozulun dünya duruşu kare başına bir kez. getWorldPosition
+      // ata matrislerini kendisi tazeler (r166) — rig bu kare döndüyse
+      // doğumlar YENİ yönü görür.
+      this.nozul.getWorldPosition(_wPos);
+      this.nozul.getWorldQuaternion(_wQuat);
+      while (dogacak-- > 0 && this.bosSayisi > 0) {
+        // Yığından slot çek (LIFO — sıcak bellek, önemi yok ama bedava).
+        // Havuz dolarsa kalan doğumlar sessizce düşer: kapasite %10
+        // paylı hesaplandığından bu ancak dt sıçramasında olur, görünmez.
+        const idx = this.bosYigin[--this.bosSayisi];
+        this.dogur(idx);
+      }
+      this.geo.attributes.aSize.needsUpdate = true;  // boylar sadece doğumda değişir
+    }
+
+    // 2) FİZİK + ÖLÜM (yalnız canlılar — Uint8 filtresi dallanması ucuz)
+    const K = this.kapasite;
+    const pos = this.pos, vel = this.vel, yas = this.yas, omur = this.omur;
+    for (let i = 0; i < K; i++) {
+      if (!this.canli[i]) continue;
+      vel[i * 3 + 1] -= G * dt;                 // yerçekimi
+      pos[i * 3 + 0] += vel[i * 3 + 0] * dt;    // Euler entegrasyonu (Ders 1)
+      pos[i * 3 + 1] += vel[i * 3 + 1] * dt;
+      pos[i * 3 + 2] += vel[i * 3 + 2] * dt;
+      yas[i] += dt;
+      if (yas[i] >= omur[i] || pos[i * 3 + 1] < 0) {
+        // ÖLÜM: canlılıktan düş, slotu yığına iade et, GPU'ya aAge=1
+        // ile "çizme" de. Konum/hız dizide bayat kalır — sorun değil,
+        // vertex shader ölü slotu klipliyor, kimse o veriyi okumuyor.
+        this.canli[i] = 0;
+        this.aAge[i] = 1;
+        this.bosYigin[this.bosSayisi++] = i;
+      } else {
+        this.aAge[i] = yas[i] / omur[i];        // 0..1 normalize yaş
+        this.aVy[i] = vel[i * 3 + 1];           // köpük hilesinin yakıtı
+      }
+    }
+
+    // 3) GPU'ya "değişti" bayrakları. needsUpdate sadece bir sürüm
+    // sayacını artırır; gerçek yükleme bir SONRAKİ render'da olur —
+    // bu yüzden prewarm'daki render'sız 150 adım da bedavadır.
+    this.geo.attributes.position.needsUpdate = true;
+    this.geo.attributes.aVy.needsUpdate = true;
+    this.geo.attributes.aAge.needsUpdate = true;
+  }
+
+  // --- PREWARM (quarks parametresi) ---
+  // Ders 1'de sahneyi ilk kareden doldurmak için kapalı-form scatter
+  // kullanmıştık: "her damla sanki t sn önce fırlamış gibi ışınla".
+  // O hile TEK balistik jet için yazılabilirdi; genel cihazda (disc
+  // doğumlu geyser, dönen robo, yarın türbülans) kapalı form YOK.
+  // Genel çözüm kaba ama evrensel: kurulumda simülasyonu 1/60'lık
+  // adımlarla ~2.5 s önden koştur. Render yok, sadece CPU — 150 adım
+  // göz açıp kapayana kadar biter, sahne ilk kareden dolu açılır.
+  prewarm(sure = 2.5) {
+    const h = 1 / 60;
+    for (let t = 0; t < sure; t += h) this.step(h);
+  }
+}
+
+// ============================================================
+// BLOK 5 — SHADER (Ders 2'den + iki genelleme)
+// Ders 2'de üç katman üç ayrı shader çifti kullanıyordu; burada tersi:
+// DÖRT cihaz TEK shader çifti kullanır — farklar uniform/attribute'ta.
+// "Cihaz = veri" tezinin GPU'daki yansıması bu.
+// Genelleme 1: uAeration — cihazın yapısal köpüklülüğü (preset'ten).
+// Genelleme 2: aAge — ömür sonu alfa sönümü + ölü-slot klipleme.
+// aVy köpük hilesi ve soft fade Ders 2'den AYNEN.
+// ============================================================
+
+// Ortak uniform nesneleri (Ders 2'den — spread ile her malzemeye AYNI
+// {value} nesnesi gider, bir yerden güncellemek hepsini günceller).
+// uTime çıktı: Ders 2'de sadece sis salınımı kullanıyordu, sis yok.
+const ortakUniformlar = {
+  uDerinlikDoku: { value: null },                // BLOK 7'de dolacak
+  uCozunurluk:   { value: new THREE.Vector2() },
+  uKameraYakin:  { value: camera.near },
+  uKameraUzak:   { value: camera.far },
+  uPixelYariCap: { value: 1 }                    // resize'da güncellenir
+};
+
+function katmanUniformlari(ozel) {
+  return { ...ortakUniformlar, ...ozel };
+}
+
+// Soft-fade GLSL bloğu (Ders 2 BLOK 4'ten aynen — anlatım orada).
+const SOFT_FADE_GLSL = /* glsl */`
+  #include <packing>
+  uniform sampler2D uDerinlikDoku;  // opak sahnenin derinlik fotoğrafı
+  uniform vec2  uCozunurluk;
+  uniform float uKameraYakin;
+  uniform float uKameraUzak;
+  uniform float uYumusaklik;        // geçiş bandı (m) — cihaz başına preset'ten
+
+  float softFade(float fragViewZ) {
+    vec2 uv = gl_FragCoord.xy / uCozunurluk;
+    float sahneDerinlik = texture2D(uDerinlikDoku, uv).x;
+    float sahneViewZ = perspectiveDepthToViewZ(sahneDerinlik, uKameraYakin, uKameraUzak);
+    return smoothstep(0.0, uYumusaklik, fragViewZ - sahneViewZ);
+  }
+`;
+
+const cihazVertex = /* glsl */`
+  attribute float aSize;   // metre — doğum anında örneklenmiş boy
+  attribute float aVy;     // dikey hız (köpük hilesi)
+  attribute float aAge;    // 0..1 normalize yaş; 1.0 = ÖLÜ slot
+  uniform float uPixelYariCap;
+  varying float vVy;
+  varying float vAge;
+  varying float vViewZ;
+
+  void main() {
+    // ÖLÜ-SLOT KLİPLEME: havuzdaki boş slotların konum verisi bayat.
+    // GPU'ya "bunu hiç çizme" demenin en ucuz yolu vertex'te: köşeyi
+    // clip hacminin dışına at (z > w → klip) + boyu sıfırla. Fragment
+    // aşaması o parçacık için hiç doğmaz — discard'dan bile ucuz.
+    if (aAge >= 1.0) {
+      gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
+      gl_PointSize = 0.0;
+      vVy = 0.0; vAge = 1.0; vViewZ = 0.0;
+      return;
+    }
+    vVy = aVy;
+    vAge = aAge;
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    vViewZ = mvPosition.z;
+    // El yapımı sizeAttenuation (formülün anlatımı Ders 2 BLOK 3):
+    // Ders 2'deki uSize*aSize çarpımı yerine boy tek attribute'ta —
+    // doğum-anı örnekleme zaten parçacık başına nihai boyu üretiyor.
+    gl_PointSize = aSize * (uPixelYariCap / -mvPosition.z);
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`;
+
+const cihazFragment = /* glsl */`
+  uniform sampler2D uDoku;
+  uniform vec3  uRenk;
+  uniform float uAlfa;
+  uniform float uAeration;  // 0..1 yapısal köpük (preset'ten)
+  varying float vVy;
+  varying float vAge;
+  varying float vViewZ;
+  ${SOFT_FADE_GLSL}
+
+  void main() {
+    float doku = texture2D(uDoku, gl_PointCoord).a;
+    if (doku < 0.01) discard;   // sprite köşeleri — boşa yazma
+
+    // KÖPÜK KOMPOZİSYONU (Ders 2 hilesinin genellemesi):
+    // hizKopuk = tepe imzası: |vy| sıfıra inen su havayla karışıp
+    //            beyazlaşır (comet'in tepesi) — Ders 2'den aynen.
+    // uAeration = cihazın YAPISAL köpüğü: geyser suyu hava enjeksiyonuyla
+    //            basar, DAHA ÇIKARKEN kar beyazıdır; hızla ilgisi yok.
+    // max() ile birleşir: iki kaynaktan hangisi "daha köpüklü" diyorsa
+    // o kazanır — geyser hep beyaz (0.9 taban), comet sadece tepede
+    // (0.35 taban, tepede hizKopuk 1.0'a tırmanır).
+    float hizKopuk = 1.0 - smoothstep(0.5, 3.0, abs(vVy));
+    float kopuk = max(uAeration, hizKopuk);
+    vec3 renk = mix(uRenk, vec3(1.0), kopuk * 0.9);     // beyaza kay
+    float alfa = uAlfa * doku * mix(1.0, 1.8, kopuk);   // köpük daha yoğun
+
+    // YAŞ SÖNÜMÜ (genelleme #2): ömrün son %25'inde damla dağılır,
+    // alfa yumuşakça sıfıra iner — parçacık "pat" diye yok olmaz.
+    // (Ölüm anında ayrıca aAge=1 + vertex klip devreye girer; bu rampa
+    // o ana GÖRÜNMEZ yaklaşmayı sağlar — ikisi birlikte çalışır.)
+    alfa *= 1.0 - smoothstep(0.75, 1.0, vAge);
+
+    alfa *= softFade(vViewZ);   // zemine yaklaşan piksel erir (Ders 2)
+    gl_FragColor = vec4(renk, alfa);
+  }
+`;
+
+// ============================================================
+// BLOK 6 — PAN/TİLT RİG + KIRBAÇ ETKİSİ (dersin kalbi #3)
+//
+// Hiyerarşi (docs §4): base → panPivot(rot.y) → tiltPivot(rot.x) → nozul.
+// Neden zincir? Gerçek AquaROBO da böyle: kaide sabit, üstünde yatay
+// dönen gövde (pan), onun üstünde dikey eğilen kafa (tilt). Object3D
+// zinciri bu mekaniği BEDAVAYA modeller — nozulun dünya duruşu
+// matris çarpımından kendiliğinden çıkar, trigonometri yazmayız.
+//
+// SLEW-RATE SINIRI: hedef açılar sin ile üretilir ama pivota doğrudan
+// YAZILMAZ. Mekanik bir jet DMX sinyali gibi zıplayamaz — motorun
+// açısal hız tavanı var (preset: 60°/s). Takip kuralı:
+//     aci += clamp(hedef - aci, ±maxHiz·dt)
+// Hedef yavaşsa birebir izler; hedef sıçrarsa (yarın timeline "180°'ye
+// git" der) mekanik hızında YETİŞMEYE çalışır — gerçek cihaz davranışı.
+// (Buradaki sin hedefleri max ~39°/s ürettiği için slew normalde uyur;
+// varlığını görmek için konsoldan panAci'ye sıçrama verin.)
+//
+// ⭐ KIRBAÇ ETKİSİ — bu bloğun asıl dersi:
+// Parçacıklar DÜNYA uzayında doğar (dogur() doğum anında nozul duruşunu
+// dünyaya çevirir, sonra nozulu unutur). Nozul dönünce HAVADAKİ su
+// bundan habersizdir — eski yönünde balistik uçmaya devam eder; sadece
+// YENİ doğanlar yeni yöne fırlar. Sonuç: jet havada kırbaç gibi bükülür.
+// Gerçek çeşme videolarındaki o his tam olarak budur. Parçacıklar nozulun
+// ÇOCUĞU olsaydı (yerel uzay) tüm su kolonu nozulla birlikte katı cisim
+// gibi dönerdi — anında sahtelik. worldSpace şartının sebebi bu (docs §1).
+// ============================================================
+
+function rigGuncelle(cihaz, t, dt) {
+  const k = cihaz.preset.kinematics;
+  if (!k) return;   // sabit cihazlar: rig var ama koreografisi yok
+
+  // Hedef açılar — bugün elle sin, Ders 7'de timeline üretecek.
+  // İki periyot kasten farklı (8 s / 13 s): ortak döngü 104 s'ye
+  // uzar, hareket "aynı turu atıyor" hissi vermez.
+  const hedefPan = THREE.MathUtils.degToRad(k.pan.genlik) *
+                   Math.sin(2 * Math.PI * t / k.pan.periyot);
+  const hedefTilt = THREE.MathUtils.degToRad(
+                     k.tilt.merkez + k.tilt.genlik *
+                     Math.sin(2 * Math.PI * t / k.tilt.periyot));
+
+  // Slew-rate takibi: her eksen kendi mekanik tavanıyla hedefe yürür.
+  const maxAdim = THREE.MathUtils.degToRad(k.maxSpeed) * dt;
+  cihaz.panAci  += THREE.MathUtils.clamp(hedefPan  - cihaz.panAci,  -maxAdim, maxAdim);
+  cihaz.tiltAci += THREE.MathUtils.clamp(hedefTilt - cihaz.tiltAci, -maxAdim, maxAdim);
+
+  cihaz.panPivot.rotation.y  = cihaz.panAci;
+  cihaz.tiltPivot.rotation.x = cihaz.tiltAci;  // +x dönüşü +Y'yi +Z'ye yatırır → öne eğim
+}
+
+// --- Cihazların doğuşu: veri → motor ---
+// Dersin tezi tek satırda görünür: 4 farklı cihaz = 4 preset kaydı,
+// kurulum kodu HEPSİ için aynı döngü.
+const cihazlar = {};
+for (const [ad, preset] of Object.entries(PRESETLER)) {
+  cihazlar[ad] = new CihazSistemi(preset);
+}
+
+// Prewarm öncesi tüm dünya matrislerini tazele: getWorldPosition ata
+// zincirini kendisi de güncelliyor (r166) ama ilk kareden önce sahnenin
+// tamamını bir kez senkronlamak en nettir (yelpazenin 45°'si, robonun
+// 18° başlangıç tilt'i prewarm doğumlarına doğru yansısın).
+scene.updateMatrixWorld(true);
+for (const c of Object.values(cihazlar)) c.prewarm(2.5);
+
+// ============================================================
+// BLOK 7 — SOFT PARTICLES + BLOOM (Ders 2'den)
+// Depth prepass + DepthTexture kurulumunun satır satır anlatımı
+// Ders 2 BLOK 4 ve 6'da. Buradaki tek fark: gizlenecek liste artık
+// 3 katman değil, 4 cihazın Points nesneleri.
+// ============================================================
+
+const dbBoyut = new THREE.Vector2();
+renderer.getDrawingBufferSize(dbBoyut);
+const depthTarget = new THREE.WebGLRenderTarget(dbBoyut.x, dbBoyut.y, {
+  depthBuffer: true,
+  stencilBuffer: false
+});
+depthTarget.depthTexture = new THREE.DepthTexture(dbBoyut.x, dbBoyut.y);
+depthTarget.depthTexture.format = THREE.DepthFormat;
+depthTarget.depthTexture.type = THREE.UnsignedIntType;
+
+ortakUniformlar.uDerinlikDoku.value = depthTarget.depthTexture;
+
+// Prepass'te gizlenecekler: parçacıklar derinlik fotoğrafına girmemeli
+// (kendi kendilerine karşı fade olurlardı — Ders 2).
+const katmanlar = Object.values(cihazlar).map(c => c.points);
+
+function derinlikOnGecisi() {
+  for (const k of katmanlar) k.visible = false;
+  renderer.setRenderTarget(depthTarget);
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(null);
+  for (const k of katmanlar) k.visible = true;
+}
+
+function cozunurlukGuncelle() {
+  renderer.getDrawingBufferSize(dbBoyut);
+  depthTarget.setSize(dbBoyut.x, dbBoyut.y);
+  ortakUniformlar.uCozunurluk.value.copy(dbBoyut);
+  ortakUniformlar.uPixelYariCap.value = dbBoyut.y * 0.5;
+}
+cozunurlukGuncelle();
+
+// Bloom zinciri (Ders 2 BLOK 6'dan aynen, aynı 0.8/0.5/0.2 ayarı).
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloomPass = new UnrealBloomPass(
+  new THREE.Vector2(innerWidth, innerHeight),
+  0.8,   // strength
+  0.5,   // radius
+  0.2    // threshold — koyu fon temiz kalır, sadece su parlar
+);
+composer.addPass(bloomPass);
+composer.addPass(new OutputPass());  // tone mapping + linear→sRGB (Ders 2)
+
+// ============================================================
+// BLOK 8 — RENDER DÖNGÜSÜ
+// Kare planı: dt ölç (clamp) → rig'leri güncelle → 4 cihazı adımla
+// (emisyon + fizik + attribute) → derinlik ön-geçişi → composer → fps.
+// Rig ÖNCE, cihaz SONRA: bu karenin doğumları bu karenin nozul
+// yönünü görsün — bir kare gecikme bile kırbaç eğrisini kabalaştırır.
+// ============================================================
+
+const clock = new THREE.Clock();
+let simZaman = 0;
+let frames = 0, fpsTimer = 0;
+const fpsEl = document.getElementById('fps');
+
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 1 / 20);  // dev dt sıçramasını kırp (Ders 1)
+  simZaman += dt;
+
+  for (const c of Object.values(cihazlar)) rigGuncelle(c, simZaman, dt);
+  for (const c of Object.values(cihazlar)) c.step(dt);
+  controls.update();
+
+  derinlikOnGecisi();   // 1) parçacıksız sahnenin derinlik fotoğrafı
+  composer.render();    // 2) asıl kare: sahne → bloom → sRGB çıktı
+
+  frames++; fpsTimer += dt;
+  if (fpsTimer >= 1) { fpsEl.textContent = frames; frames = 0; fpsTimer = 0; }
+});
+
+// Resize zinciri (Ders 2'den): composer + derinlik hedefi + uniform'lar.
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+  cozunurlukGuncelle();
+});
+
+// Debug kancası: konsoldan canlı dürtme.
+// Örn: DERS3.cihazlar.geyser.mat.uniforms.uAeration.value = 0  → köpüğü kapat
+//      DERS3.cihazlar.robo.preset.kinematics.pan.periyot = 3   → hızlı süpürme
+//      DERS3.cihazlar.robo.panAci = Math.PI                    → slew'in yetişmesini İZLE
+//      DERS3.PRESETLER                                          → cihaz kütüphanesi = veri
+window.DERS3 = {
+  cihazlar,          // {duz_jet, geyser, yelpaze, robo} — CihazSistemi örnekleri
+  PRESETLER,         // ham veri: kütüphanenin kendisi
+  renderer, scene, camera, composer, bloomPass, depthTarget,
+  ortakUniformlar, rigGuncelle
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,911 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>Ders 8 — Timeline editör lite (cue ekle/taşı/sil · scrub · müzik senkron)</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000;
+    font-family: Consolas, monospace; }
+  #info {
+    position: fixed; top: 8px; left: 8px;
+    color: #8fd3ff; font-size: 13px; line-height: 1.5;
+    text-shadow: 0 1px 2px #000; z-index: 5;
+  }
+  b { color: #ffd27f; }
+
+  /* ---- Editör paneli (BLOK 10) ---- */
+  #editor {
+    position: fixed; left: 0; right: 0; bottom: 0; height: 300px;
+    background: rgba(8, 12, 20, 0.92);
+    border-top: 1px solid #24384d; z-index: 4;
+    display: flex; flex-direction: column;
+    user-select: none;
+  }
+  #transport {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 10px; color: #cfe8ff; font-size: 12px;
+    border-bottom: 1px solid #1a2836;
+  }
+  #transport button, #transport label.dosya {
+    background: #16283a; color: #cfe8ff;
+    border: 1px solid #2b4a63; border-radius: 4px; padding: 3px 10px;
+    font: inherit; cursor: pointer;
+  }
+  #transport button:hover, #transport label.dosya:hover { background: #1e3a52; }
+  #oynat { min-width: 42px; }
+  #saat { color: #8fd3ff; min-width: 96px; }
+  #transport .ayr { flex: 1; }
+  #ipuc { color: #6f88a0; font-size: 11px; }
+  /* min-height:0 ŞART: flex çocuğu canvas olunca, bu olmadan canvas kendi
+     bitmap yüksekliğine şişer (flex onu kısamaz) → şeritler taşar. */
+  #tuval { flex: 1 1 auto; min-height: 0; display: block; width: 100%;
+    touch-action: none; cursor: crosshair; }
+  #mesaj {
+    position: fixed; right: 12px; bottom: 308px; z-index: 6;
+    background: #16323a; color: #bff0d0; border: 1px solid #2b6a4a;
+    border-radius: 4px; padding: 6px 10px; font-size: 12px; opacity: 0;
+    transition: opacity 0.25s; pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div id="info">Ders 8 — <b>timeline editör</b> &middot; <span id="sayi">-</span> parçacık &middot; sahnede: sol tık döndür / teker zoom &middot; <span id="fps">-</span> fps</div>
+
+<div id="mesaj"></div>
+<div id="editor">
+  <div id="transport">
+    <button id="oynat">▶</button>
+    <button id="dongu">⟳ döngü: açık</button>
+    <span id="saat">0.0 / 0.0 s</span>
+    <label class="dosya">🎵 müzik<input id="muzikDosya" type="file" accept="audio/*" hidden></label>
+    <button id="disari">JSON kopyala</button>
+    <span class="ayr"></span>
+    <span id="ipuc">boş şeride tık = cue ekle · nokta sürükle = taşı · çift tık / sağ tık = sil · cetvelden scrub</span>
+  </div>
+  <canvas id="tuval"></canvas>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { GPUComputationRenderer } from 'three/addons/misc/GPUComputationRenderer.js';
+
+// ============================================================
+// DERS 8 — TIMELINE EDİTÖR LITE (P2)
+//
+// Ders 7'de şovu bir JSON'un SÜRDÜĞÜNÜ gösterdik ama JSON elle, kör
+// yazılıyordu. Editör = o JSON'u GÖRSEL ve İNTERAKTİF düzenleme yüzeyi:
+// kanallar yatay şeritler, cue'lar sürüklenebilir noktalar, bir playhead
+// zamanı gezer. Bu dersin tezi:
+//
+//   MOTOR AYNI KALIR. Editör yalnızca ZAMAN_CIZELGESI dizisini MUTASYONLAR
+//   ve şov saatini (transport) yönetir. Ders 7'nin Zamanlayici'sı ve
+//   köprüsü tek satır değişmeden aynı diziyi okumaya devam eder → düzenleme
+//   sahneye CANLI yansır. (Veri-sürümlü mimarinin ödülü: araç katmanı
+//   motordan bağımsız büyür.)
+//
+// Yeni parçalar:
+//   • Transport (BLOK 10a): oynat/duraklat, döngü, scrub, müzik senkron.
+//   • Editör tuvali (BLOK 10b): 2D canvas'ta kanal şeritleri + cue noktaları
+//     + playhead; fare ile cue ekle/taşı/sil, cetvelden scrub.
+//   • Müzik: dosya → HTMLAudioElement; çalınca showT = audio.currentTime
+//     (ses zaman OTORİTESİ olur → görüntü sese kilitlenir, P3'ün zemini).
+//
+// Motor Ders 7'den birebir (BLOK 1-9). Not: duraklatınca fizik dt=0 →
+// su donar; scrub sırasında emisyon parametreleri güncellenir ama donmuş
+// parçacıklar geriye simüle edilmez (lite editör kabulü).
+// ============================================================
+
+// ============================================================
+// BLOK 1 — SAHNE (Ders 7)
+// ============================================================
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x050810);
+scene.fog = new THREE.Fog(0x050810, 18, 55);
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(7, 4, 11);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 2.5, 0);
+controls.enableDamping = true;
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(10, 48),
+  new THREE.MeshStandardMaterial({ color: 0x0a1622, roughness: 0.35, metalness: 0.2 })
+);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+scene.add(new THREE.AmbientLight(0x223344, 0.4));
+const G = 9.81;
+
+// ============================================================
+// BLOK 2 — SPRITE DOKU (Ders 7)
+// ============================================================
+function dokuUret(ciz) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  ciz(c.getContext('2d'), 128);
+  return new THREE.CanvasTexture(c);
+}
+const damlaDoku = dokuUret((ctx, S) => {
+  const g = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  g.addColorStop(0.0, 'rgba(255,255,255,1)');
+  g.addColorStop(0.35, 'rgba(255,255,255,0.75)');
+  g.addColorStop(1.0, 'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, S, S);
+});
+
+// ============================================================
+// BLOK 3 — SU CİHAZLARI = VERİ (Ders 7)
+// ============================================================
+const PRESETLER = {
+  duz_jet: {
+    konum: [-2, 0, 0], kenar: 176,
+    shape: { type: 'point', angle: 0.05 },
+    particle: { speed: { a: 10.0, b: 12.0 }, life: { a: 2.0, b: 2.3 },
+      size: 0.045, color: '#bfe3ff', alpha: 0.08, aeration: 0.35 },
+    yumusaklik: 0.4
+  },
+  geyser: {
+    konum: [2, 0, 0], kenar: 196,
+    shape: { type: 'disc', radius: 0.28, angle: 0.22 },
+    particle: { speed: { a: 5.5, b: 7.0 }, life: { a: 1.2, b: 1.5 },
+      size: 0.06, color: '#e8f4ff', alpha: 0.03, aeration: 0.75 },
+    yumusaklik: 0.5
+  }
+};
+
+const N_ISIK = 4;
+const ortakUniformlar = {
+  uDerinlikDoku: { value: null },
+  uCozunurluk: { value: new THREE.Vector2() },
+  uKameraYakin: { value: camera.near },
+  uKameraUzak: { value: camera.far },
+  uPixelYariCap: { value: 1 },
+  uIsikSayisi: { value: 0 },
+  uIsikPos: { value: Array.from({ length: N_ISIK }, () => new THREE.Vector3()) },
+  uIsikYon: { value: Array.from({ length: N_ISIK }, () => new THREE.Vector3(0, 1, 0)) },
+  uIsikCosAci: { value: new Array(N_ISIK).fill(1) },
+  uIsikRenk: { value: Array.from({ length: N_ISIK }, () => new THREE.Color()) },
+  uIsikTepki: { value: 1.6 },
+  uTabanIsik: { value: 0.30 }
+};
+function katmanUniformlari(ozel) { return { ...ortakUniformlar, ...ozel }; }
+
+const SOFT_FADE_GLSL = /* glsl */`
+  #include <packing>
+  uniform sampler2D uDerinlikDoku;
+  uniform vec2  uCozunurluk;
+  uniform float uKameraYakin;
+  uniform float uKameraUzak;
+  uniform float uYumusaklik;
+  float softFade(float fragViewZ) {
+    vec2 uv = gl_FragCoord.xy / uCozunurluk;
+    float sahneDerinlik = texture2D(uDerinlikDoku, uv).x;
+    float sahneViewZ = perspectiveDepthToViewZ(sahneDerinlik, uKameraYakin, uKameraUzak);
+    return smoothstep(0.0, uYumusaklik, fragViewZ - sahneViewZ);
+  }
+`;
+
+// ============================================================
+// BLOK 4 — GPU FİZİK ÇEKİRDEĞİ (Ders 7, uHizScale dahil)
+// ============================================================
+const GPU_ORTAK_GLSL = /* glsl */`
+  float hash11(float p){ p = fract(p * 0.1031); p *= p + 33.33; p *= p + p; return fract(p); }
+  float g_seed;
+  float rnd(){ g_seed += 1.0; return hash11(g_seed); }
+  void cerceve(vec3 n, out vec3 t1, out vec3 t2){
+    vec3 up = abs(n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    t1 = normalize(cross(up, n));
+    t2 = cross(n, t1);
+  }
+  vec3 koniYon(vec3 eksen, float aciMax){
+    vec3 t1, t2; cerceve(eksen, t1, t2);
+    float az = rnd() * 6.2831853;
+    float po = aciMax * sqrt(rnd());
+    return normalize(eksen * cos(po) + (t1 * cos(az) + t2 * sin(az)) * sin(po));
+  }
+`;
+
+const konumShader = /* glsl */`
+  uniform float uDt;
+  uniform float uTime;
+  uniform vec3  uNozulPos;
+  uniform vec3  uNozulYon;
+  uniform float uDiskR;
+  ${GPU_ORTAK_GLSL}
+  void main(){
+    vec2 uv = gl_FragCoord.xy / resolution.xy;
+    vec4 P = texture2D(texturePosition, uv);
+    vec4 V = texture2D(textureVelocity, uv);
+    vec3 pos = P.xyz;  float yas  = P.w;
+    vec3 vel = V.xyz;  float omur = V.w;
+    vel.y -= 9.81 * uDt;
+    pos += vel * uDt;
+    yas += uDt;
+    if (yas >= omur || pos.y < 0.0) {
+      g_seed = dot(uv, vec2(12.9898, 78.233)) + uTime * 7.0 + 3.7;
+      vec3 t1, t2; cerceve(normalize(uNozulYon), t1, t2);
+      float az = rnd() * 6.2831853;
+      float rr = uDiskR * sqrt(rnd());
+      pos = uNozulPos + (t1 * cos(az) + t2 * sin(az)) * rr;
+      yas = 0.0;
+    }
+    gl_FragColor = vec4(pos, yas);
+  }
+`;
+
+const hizShader = /* glsl */`
+  uniform float uDt;
+  uniform float uTime;
+  uniform vec3  uNozulYon;
+  uniform float uKoniAci;
+  uniform float uHizA;
+  uniform float uHizB;
+  uniform float uOmurA;
+  uniform float uOmurB;
+  uniform float uHizScale;
+  ${GPU_ORTAK_GLSL}
+  void main(){
+    vec2 uv = gl_FragCoord.xy / resolution.xy;
+    vec4 P = texture2D(texturePosition, uv);
+    vec4 V = texture2D(textureVelocity, uv);
+    float yas  = P.w;
+    vec3 vel = V.xyz;  float omur = V.w;
+    vec3 yeniVel = vel;  yeniVel.y -= 9.81 * uDt;
+    vec3 yeniPos = P.xyz + yeniVel * uDt;
+    float yeniYas = yas + uDt;
+    if (yeniYas >= omur || yeniPos.y < 0.0) {
+      g_seed = dot(uv, vec2(12.9898, 78.233)) + uTime * 7.0;
+      vec3 yon = koniYon(normalize(uNozulYon), uKoniAci);
+      float hiz  = (uHizA + rnd() * (uHizB - uHizA)) * uHizScale;
+      omur       = uOmurA + rnd() * (uOmurB - uOmurA);
+      yeniVel = yon * hiz;
+    }
+    gl_FragColor = vec4(yeniVel, omur);
+  }
+`;
+
+const _t1 = new THREE.Vector3(), _t2 = new THREE.Vector3();
+function cerceveJS(n, t1, t2) {
+  const up = Math.abs(n.y) < 0.99 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+  t1.crossVectors(up, n).normalize();
+  t2.crossVectors(n, t1);
+}
+function koniYonJS(eksen, aciMax, hedef) {
+  cerceveJS(eksen, _t1, _t2);
+  const az = Math.random() * Math.PI * 2;
+  const po = aciMax * Math.sqrt(Math.random());
+  hedef.copy(eksen).multiplyScalar(Math.cos(po))
+    .addScaledVector(_t1, Math.cos(az) * Math.sin(po))
+    .addScaledVector(_t2, Math.sin(az) * Math.sin(po));
+}
+
+// ============================================================
+// BLOK 5 — GpuParcaSistemi (Ders 7)
+// ============================================================
+const _eksen = new THREE.Vector3(0, 1, 0);
+const _v0 = new THREE.Vector3(), _p = new THREE.Vector3(), _v = new THREE.Vector3();
+
+class GpuParcaSistemi {
+  constructor(preset) {
+    this.preset = preset;
+    const W = preset.kenar, H = preset.kenar;
+    this.sayi = W * H;
+    const p = preset.particle;
+    this.baseAlfa = p.alpha;
+
+    const nozul = new THREE.Vector3().fromArray(preset.konum);
+    const diskR = preset.shape.type === 'disc' ? preset.shape.radius : 0.0;
+    const koniAci = preset.shape.angle;
+
+    this.gpu = new GPUComputationRenderer(W, H, renderer);
+    this.gpu.setDataType(THREE.FloatType);
+    const dtPos = this.gpu.createTexture();
+    const dtVel = this.gpu.createTexture();
+    const posD = dtPos.image.data, velD = dtVel.image.data;
+
+    for (let i = 0; i < this.sayi; i++) {
+      const hiz = p.speed.a + Math.random() * (p.speed.b - p.speed.a);
+      const omur = p.life.a + Math.random() * (p.life.b - p.life.a);
+      const t0 = Math.random() * omur;
+      koniYonJS(_eksen, koniAci, _v0);
+      _v0.multiplyScalar(hiz);
+      _p.copy(nozul);
+      if (diskR > 0) {
+        cerceveJS(_eksen, _t1, _t2);
+        const a = Math.random() * Math.PI * 2;
+        const r = diskR * Math.sqrt(Math.random());
+        _p.addScaledVector(_t1, Math.cos(a) * r).addScaledVector(_t2, Math.sin(a) * r);
+      }
+      _p.addScaledVector(_v0, t0); _p.y -= 0.5 * G * t0 * t0;
+      _v.copy(_v0); _v.y -= G * t0;
+      const k = i * 4;
+      posD[k] = _p.x; posD[k + 1] = _p.y; posD[k + 2] = _p.z; posD[k + 3] = t0;
+      velD[k] = _v.x; velD[k + 1] = _v.y; velD[k + 2] = _v.z; velD[k + 3] = omur;
+    }
+
+    this.posVar = this.gpu.addVariable('texturePosition', konumShader, dtPos);
+    this.velVar = this.gpu.addVariable('textureVelocity', hizShader, dtVel);
+    this.gpu.setVariableDependencies(this.posVar, [this.posVar, this.velVar]);
+    this.gpu.setVariableDependencies(this.velVar, [this.posVar, this.velVar]);
+
+    Object.assign(this.posVar.material.uniforms, {
+      uDt: { value: 0 }, uTime: { value: 0 },
+      uNozulPos: { value: nozul.clone() }, uNozulYon: { value: _eksen.clone() },
+      uDiskR: { value: diskR }
+    });
+    Object.assign(this.velVar.material.uniforms, {
+      uDt: { value: 0 }, uTime: { value: 0 },
+      uNozulYon: { value: _eksen.clone() }, uKoniAci: { value: koniAci },
+      uHizA: { value: p.speed.a }, uHizB: { value: p.speed.b },
+      uOmurA: { value: p.life.a }, uOmurB: { value: p.life.b },
+      uHizScale: { value: 1.0 }
+    });
+
+    const hata = this.gpu.init();
+    if (hata) console.error('GPUComputationRenderer:', hata);
+
+    const aRef = new Float32Array(this.sayi * 2);
+    const aSize = new Float32Array(this.sayi);
+    for (let i = 0; i < this.sayi; i++) {
+      aRef[i * 2] = ((i % W) + 0.5) / W;
+      aRef[i * 2 + 1] = (Math.floor(i / W) + 0.5) / H;
+      aSize[i] = p.size * (0.7 + Math.random() * 0.6);
+    }
+    this.geo = new THREE.BufferGeometry();
+    this.geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.sayi * 3), 3));
+    this.geo.setAttribute('aRef', new THREE.BufferAttribute(aRef, 2));
+    this.geo.setAttribute('aSize', new THREE.BufferAttribute(aSize, 1));
+
+    this.mat = new THREE.ShaderMaterial({
+      uniforms: katmanUniformlari({
+        uPosTex: { value: null }, uVelTex: { value: null },
+        uDoku: { value: damlaDoku },
+        uRenk: { value: new THREE.Color(p.color) },
+        uAlfa: { value: p.alpha },
+        uAeration: { value: p.aeration },
+        uYumusaklik: { value: preset.yumusaklik }
+      }),
+      vertexShader: renderVertex, fragmentShader: renderFragment,
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+    });
+    this.points = new THREE.Points(this.geo, this.mat);
+    this.points.frustumCulled = false;
+    scene.add(this.points);
+  }
+  setMaster(v) { this.mat.uniforms.uAlfa.value = this.baseAlfa * Math.max(0, v); }
+  setHiz(k) { this.velVar.material.uniforms.uHizScale.value = Math.max(0, k); }
+  step(dt, t) {
+    for (const v of [this.posVar, this.velVar]) {
+      v.material.uniforms.uDt.value = dt;
+      v.material.uniforms.uTime.value = t;
+    }
+    this.gpu.compute();
+    this.mat.uniforms.uPosTex.value = this.gpu.getCurrentRenderTarget(this.posVar).texture;
+    this.mat.uniforms.uVelTex.value = this.gpu.getCurrentRenderTarget(this.velVar).texture;
+  }
+}
+
+// ============================================================
+// BLOK 6 — RENDER SHADER'LARI (Ders 7)
+// ============================================================
+const renderVertex = /* glsl */`
+  attribute vec2  aRef;
+  attribute float aSize;
+  uniform sampler2D uPosTex;
+  uniform sampler2D uVelTex;
+  uniform float uPixelYariCap;
+  uniform int   uIsikSayisi;
+  uniform vec3  uIsikPos[4];
+  uniform vec3  uIsikYon[4];
+  uniform float uIsikCosAci[4];
+  uniform vec3  uIsikRenk[4];
+  varying float vVy;
+  varying float vAge;
+  varying float vViewZ;
+  varying vec3  vIsik;
+  void main() {
+    vec4 P = texture2D(uPosTex, aRef);
+    vec4 V = texture2D(uVelTex, aRef);
+    vec3 worldPos = P.xyz;
+    vVy  = V.y;
+    vAge = clamp(P.w / max(V.w, 1e-4), 0.0, 1.0);
+    vIsik = vec3(0.0);
+    for (int i = 0; i < 4; i++) {
+      if (i >= uIsikSayisi) break;
+      vec3 d = worldPos - uIsikPos[i];
+      float dist = length(d);
+      vec3 L = d / max(dist, 1e-4);
+      float inCone = smoothstep(uIsikCosAci[i] - 0.05, uIsikCosAci[i], dot(L, uIsikYon[i]));
+      float att = 1.0 / (1.0 + 0.12 * dist * dist);
+      vIsik += uIsikRenk[i] * inCone * att;
+    }
+    float m = max(vIsik.r, max(vIsik.g, vIsik.b));
+    if (m > 1.0) vIsik /= m;
+    vec4 mvPosition = viewMatrix * vec4(worldPos, 1.0);
+    vViewZ = mvPosition.z;
+    gl_PointSize = aSize * (uPixelYariCap / -mvPosition.z);
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`;
+
+const renderFragment = /* glsl */`
+  uniform sampler2D uDoku;
+  uniform vec3  uRenk;
+  uniform float uAlfa;
+  uniform float uAeration;
+  uniform float uIsikTepki;
+  uniform float uTabanIsik;
+  varying float vVy;
+  varying float vAge;
+  varying float vViewZ;
+  varying vec3  vIsik;
+  ${SOFT_FADE_GLSL}
+  void main() {
+    float doku = texture2D(uDoku, gl_PointCoord).a;
+    if (doku < 0.01) discard;
+    float hizKopuk = 1.0 - smoothstep(0.5, 3.0, abs(vVy));
+    float kopuk = max(uAeration, hizKopuk);
+    vec3 albedo = mix(uRenk, vec3(1.0), kopuk * 0.9);
+    vec3 renk = albedo * (uTabanIsik + vIsik * uIsikTepki);
+    float alfa = uAlfa * doku * mix(1.0, 1.8, kopuk);
+    alfa *= 1.0 - smoothstep(0.75, 1.0, vAge);
+    alfa *= softFade(vViewZ);
+    gl_FragColor = vec4(renk, alfa);
+  }
+`;
+
+// ============================================================
+// BLOK 7 — IŞIKLAR (Ders 7)
+// ============================================================
+const ISIK_PRESETLER = {
+  spot_kirmizi: { konum: [-4, 0.3, 3], hedef: [-2, 3, 0], aciDeg: 22, menzil: 14, spotSiddet: 60,
+    hueBasla: 0.00, hizHue: 0.020, doygunluk: 1.0, parlaklik: 0.50 },
+  spot_mavi: { konum: [4, 0.3, 3], hedef: [2, 3, 0], aciDeg: 26, menzil: 14, spotSiddet: 60,
+    hueBasla: 0.60, hizHue: 0.025, doygunluk: 1.0, parlaklik: 0.50 },
+  spot_yesil: { konum: [0, 0.3, -4], hedef: [0, 4, 0], aciDeg: 30, menzil: 15, spotSiddet: 50,
+    hueBasla: 0.33, hizHue: 0.018, doygunluk: 0.9, parlaklik: 0.50 }
+};
+
+class IsikSistemi {
+  constructor(preset, index) {
+    this.preset = preset;
+    this.index = index;
+    this.pos = new THREE.Vector3().fromArray(preset.konum);
+    this.hedef = new THREE.Vector3().fromArray(preset.hedef);
+    this.aciRad = THREE.MathUtils.degToRad(preset.aciDeg);
+    this.renk = new THREE.Color();
+    this._bridge = new THREE.Color();
+    this.yon = new THREE.Vector3().subVectors(this.hedef, this.pos).normalize();
+    this.cosAci = Math.cos(this.aciRad);
+    this.hueOverride = null;
+    this.parlaklikScale = 1.0;
+    this.spot = new THREE.SpotLight(0xffffff, preset.spotSiddet, preset.menzil,
+      this.aciRad, 0.6, 1.2);
+    this.spot.position.copy(this.pos);
+    this.spot.target.position.copy(this.hedef);
+    scene.add(this.spot);
+    scene.add(this.spot.target);
+  }
+  setHue(h) { this.hueOverride = ((h % 1) + 1) % 1; }
+  setParlaklik(b) { this.parlaklikScale = Math.max(0, b); }
+  guncelle(t) {
+    const pr = this.preset;
+    let hue;
+    if (this.hueOverride !== null) hue = this.hueOverride;
+    else { hue = (pr.hueBasla + t * pr.hizHue) % 1.0; if (hue < 0) hue += 1.0; }
+    this.renk.setHSL(hue, pr.doygunluk, pr.parlaklik);
+    const b = this.parlaklikScale;
+    this.spot.color.copy(this.renk);
+    this.spot.intensity = pr.spotSiddet * b;
+    this._bridge.copy(this.renk).multiplyScalar(b);
+    ortakUniformlar.uIsikPos.value[this.index].copy(this.pos);
+    ortakUniformlar.uIsikYon.value[this.index].copy(this.yon);
+    ortakUniformlar.uIsikCosAci.value[this.index] = this.cosAci;
+    ortakUniformlar.uIsikRenk.value[this.index].copy(this._bridge);
+  }
+}
+
+const cihazlar = {};
+for (const [ad, preset] of Object.entries(PRESETLER)) cihazlar[ad] = new GpuParcaSistemi(preset);
+const isiklar = {};
+let isikIdx = 0;
+for (const [ad, preset] of Object.entries(ISIK_PRESETLER)) isiklar[ad] = new IsikSistemi(preset, isikIdx++);
+ortakUniformlar.uIsikSayisi.value = isikIdx;
+document.getElementById('sayi').textContent =
+  Object.values(cihazlar).reduce((s, c) => s + c.sayi, 0).toLocaleString('tr-TR');
+
+// ============================================================
+// BLOK 8 — TIMELINE + OYNATICI + KÖPRÜ (Ders 7, format birebir)
+// ============================================================
+const ZAMAN_CIZELGESI = {
+  sure: 24,
+  kanallar: [
+    { hedef: 'duz_jet.master', tip: 'smooth', anahtarlar: [[0, 0.2], [1.5, 1.0], [11, 1.0], [12, 0.15], [13, 1.0], [22, 1.0], [24, 0.2]] },
+    { hedef: 'duz_jet.hiz', tip: 'smooth', anahtarlar: [[0, 0.55], [3, 0.8], [6, 1.2], [7.5, 0.9], [9, 1.2], [10.5, 0.9], [12, 1.25], [18, 1.1], [24, 0.6]] },
+    { hedef: 'geyser.master', tip: 'step', anahtarlar: [[0, 0], [6, 1], [9, 0], [10.5, 1], [12, 0], [13, 1], [24, 0]] },
+    { hedef: 'geyser.hiz', tip: 'smooth', anahtarlar: [[6, 0.9], [8, 1.3], [10.5, 1.0], [13, 1.35], [18, 1.1], [24, 0.9]] },
+    { hedef: 'spot_kirmizi.hue', tip: 'linear', anahtarlar: [[0, 0.02], [6, 0.08], [12, 0.0], [18, 0.95], [24, 0.02]] },
+    { hedef: 'spot_kirmizi.parlaklik', tip: 'smooth', anahtarlar: [[0, 0.7], [11, 0.9], [12, 0.1], [13, 1.4], [16, 1.0], [24, 0.7]] },
+    { hedef: 'spot_mavi.hue', tip: 'linear', anahtarlar: [[0, 0.6], [6, 0.55], [12, 0.5], [18, 0.7], [24, 0.6]] },
+    { hedef: 'spot_mavi.parlaklik', tip: 'smooth', anahtarlar: [[0, 0.5], [6, 1.0], [11, 1.0], [12, 0.1], [13, 1.3], [24, 0.5]] },
+    { hedef: 'spot_yesil.hue', tip: 'linear', anahtarlar: [[0, 0.33], [12, 0.4], [18, 0.28], [24, 0.33]] },
+    { hedef: 'spot_yesil.parlaklik', tip: 'smooth', anahtarlar: [[0, 0.4], [6, 0.8], [12, 0.1], [13, 1.2], [18, 1.4], [24, 0.4]] }
+  ]
+};
+
+class Zamanlayici {
+  constructor(cizelge, kayit) {
+    this.cizelge = cizelge;
+    this.kayit = kayit;
+    for (const k of cizelge.kanallar) k.anahtarlar.sort((a, b) => a[0] - b[0]);
+    for (const k of cizelge.kanallar)
+      if (!kayit[k.hedef]) console.warn('timeline: köprüsüz hedef atlanıyor →', k.hedef);
+  }
+  ornekle(kanal, t) {
+    const a = kanal.anahtarlar;
+    if (t <= a[0][0]) return a[0][1];
+    const son = a[a.length - 1];
+    if (t >= son[0]) return son[1];
+    for (let i = 0; i < a.length - 1; i++) {
+      const [t0, v0] = a[i], [t1, v1] = a[i + 1];
+      if (t >= t0 && t <= t1) {
+        if (kanal.tip === 'step') return v0;
+        let u = (t - t0) / (t1 - t0);
+        if (kanal.tip === 'smooth') u = u * u * (3 - 2 * u);
+        return v0 + (v1 - v0) * u;
+      }
+    }
+    return son[1];
+  }
+  uygula(t) {
+    for (const kanal of this.cizelge.kanallar) {
+      const fn = this.kayit[kanal.hedef];
+      if (fn) fn(this.ornekle(kanal, t));
+    }
+  }
+}
+
+const kayit = {};
+for (const [ad, c] of Object.entries(cihazlar)) {
+  kayit[`${ad}.master`] = v => c.setMaster(v);
+  kayit[`${ad}.hiz`] = v => c.setHiz(v);
+}
+for (const [ad, l] of Object.entries(isiklar)) {
+  kayit[`${ad}.hue`] = v => l.setHue(v);
+  kayit[`${ad}.parlaklik`] = v => l.setParlaklik(v);
+}
+const zamanlayici = new Zamanlayici(ZAMAN_CIZELGESI, kayit);
+
+// ============================================================
+// BLOK 9 — RENDER HEDEFLERİ + BLOOM (Ders 7)
+// ============================================================
+const dbBoyut = new THREE.Vector2();
+renderer.getDrawingBufferSize(dbBoyut);
+const depthTarget = new THREE.WebGLRenderTarget(dbBoyut.x, dbBoyut.y, { depthBuffer: true, stencilBuffer: false });
+depthTarget.depthTexture = new THREE.DepthTexture(dbBoyut.x, dbBoyut.y);
+depthTarget.depthTexture.format = THREE.DepthFormat;
+depthTarget.depthTexture.type = THREE.UnsignedIntType;
+ortakUniformlar.uDerinlikDoku.value = depthTarget.depthTexture;
+
+const gizlenecekler = Object.values(cihazlar).map(c => c.points);
+function derinlikOnGecisi() {
+  for (const k of gizlenecekler) k.visible = false;
+  renderer.setRenderTarget(depthTarget);
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(null);
+  for (const k of gizlenecekler) k.visible = true;
+}
+function cozunurlukGuncelle() {
+  renderer.getDrawingBufferSize(dbBoyut);
+  depthTarget.setSize(dbBoyut.x, dbBoyut.y);
+  ortakUniformlar.uCozunurluk.value.copy(dbBoyut);
+  ortakUniformlar.uPixelYariCap.value = dbBoyut.y * 0.5;
+}
+cozunurlukGuncelle();
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.7, 0.5, 0.25);
+composer.addPass(bloomPass);
+composer.addPass(new OutputPass());
+
+// ============================================================
+// BLOK 10 — ⭐ EDİTÖR (transport + tuval). Motora DOKUNMAZ; sadece
+// ZAMAN_CIZELGESI'ni mutasyonlar ve showT'yi (transport) üretir.
+// ============================================================
+
+// Kanal başına değer aralığı (y ekseni ölçeği) — param sonekinden türetilir.
+function kanalAralik(hedef) {
+  if (hedef.endsWith('.hue')) return [0, 1];
+  if (hedef.endsWith('.master')) return [0, 1];
+  if (hedef.endsWith('.parlaklik')) return [0, 1.5];
+  if (hedef.endsWith('.hiz')) return [0, 1.4];
+  return [0, 1];
+}
+
+// --- 10a. Transport (zaman otoritesi) ---
+// showT = şov saati (0..sure). Otorite: müzik varsa audio.currentTime,
+// yoksa iç saat. Duraklat/oynat/döngü/scrub burada.
+const transport = {
+  showT: 0, sure: ZAMAN_CIZELGESI.sure, oynuyor: false, dongu: true, audio: null,
+  tik(dt) {
+    if (this.audio && this.oynuyor) {
+      // SES ZAMAN OTORİTESİ: görüntü sese kilitlenir (P3'ün temeli)
+      this.showT = this.audio.currentTime % this.sure;
+    } else if (this.oynuyor) {
+      this.showT += dt;
+      if (this.showT >= this.sure) this.showT = this.dongu ? this.showT % this.sure : this.sure;
+      if (!this.dongu && this.showT >= this.sure) this.oynat(false);
+    }
+    return this.showT;
+  },
+  oynat(ac = true) {
+    this.oynuyor = ac;
+    if (this.audio) {
+      if (ac) { this.audio.currentTime = this.showT % (this.audio.duration || this.sure); this.audio.play(); }
+      else this.audio.pause();
+    }
+    document.getElementById('oynat').textContent = ac ? '⏸' : '▶';
+  },
+  scrubla(t) {
+    this.showT = Math.max(0, Math.min(this.sure, t));
+    if (this.audio) this.audio.currentTime = this.showT % (this.audio.duration || this.sure);
+  }
+};
+
+function mesajGoster(m) {
+  const el = document.getElementById('mesaj');
+  el.textContent = m; el.style.opacity = '1';
+  clearTimeout(mesajGoster._t);
+  mesajGoster._t = setTimeout(() => { el.style.opacity = '0'; }, 1600);
+}
+
+// Transport düğmeleri
+document.getElementById('oynat').onclick = () => transport.oynat(!transport.oynuyor);
+document.getElementById('dongu').onclick = (e) => {
+  transport.dongu = !transport.dongu;
+  e.target.textContent = '⟳ döngü: ' + (transport.dongu ? 'açık' : 'kapalı');
+};
+document.getElementById('muzikDosya').onchange = (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  const a = new Audio(URL.createObjectURL(f));
+  a.addEventListener('loadedmetadata', () => {
+    // şov süresini müziğe uydur (editör cetveli sese göre ölçeklensin)
+    transport.sure = ZAMAN_CIZELGESI.sure = Math.max(4, a.duration || ZAMAN_CIZELGESI.sure);
+    mesajGoster('müzik yüklendi: ' + f.name + ' (' + a.duration.toFixed(1) + 's)');
+  });
+  transport.audio = a;
+};
+document.getElementById('disari').onclick = async () => {
+  const yuvarla = (o) => JSON.parse(JSON.stringify(o, (k, v) =>
+    typeof v === 'number' ? Math.round(v * 1000) / 1000 : v));
+  const metin = JSON.stringify(yuvarla(ZAMAN_CIZELGESI), null, 2);
+  console.log('=== ZAMAN_CIZELGESI ===\n' + metin);
+  try { await navigator.clipboard.writeText(metin); mesajGoster('JSON panoya kopyalandı (+ konsol)'); }
+  catch { mesajGoster('JSON konsola yazıldı (pano izni yok)'); }
+};
+
+// --- 10b. Editör tuvali (kanal şeritleri + cue noktaları + playhead) ---
+const tuval = document.getElementById('tuval');
+const g2 = tuval.getContext('2d');
+const GUTTER = 138;   // sol etiket alanı
+const RULER = 18;     // üst cetvel yüksekliği
+const KEN_R = 5;      // cue nokta yarıçapı (piksel)
+let layout = null;    // her çizimde güncellenen geometri (hit-test için)
+
+function tuvalOlcekle() {
+  // clientWidth/Height = flex'in verdiği GERÇEK CSS boyutu (bitmap değil).
+  const w = tuval.clientWidth, h = tuval.clientHeight;
+  const dpr = Math.min(devicePixelRatio, 2);
+  tuval.width = w * dpr;
+  tuval.height = h * dpr;
+  g2.setTransform(dpr, 0, 0, dpr, 0, 0);   // CSS piksel koordinatında çiz
+  layout = kurLayout(w, h);
+}
+
+function kurLayout(w, h) {
+  const x0 = GUTTER, x1 = w - 12, W = x1 - x0;
+  const laneAlan = h - RULER;
+  const n = ZAMAN_CIZELGESI.kanallar.length;
+  const laneH = laneAlan / n;
+  const lanes = ZAMAN_CIZELGESI.kanallar.map((kanal, i) => {
+    const [min, max] = kanalAralik(kanal.hedef);
+    return { kanal, i, yTop: RULER + i * laneH, laneH, min, max,
+      renk: `hsl(${(i * 47) % 360} 70% 62%)` };
+  });
+  return { x0, x1, W, RULER, laneH, lanes, w, h };
+}
+
+const tX = (t) => layout.x0 + (t / transport.sure) * layout.W;                 // zaman → piksel
+const xT = (px) => ((px - layout.x0) / layout.W) * transport.sure;             // piksel → zaman
+const vY = (lane, v) => lane.yTop + (1 - (v - lane.min) / (lane.max - lane.min)) * lane.laneH;
+const yV = (lane, py) => lane.min + (1 - (py - lane.yTop) / lane.laneH) * (lane.max - lane.min);
+
+function ciz() {
+  if (!layout) return;
+  const { w, h, lanes } = layout;
+  g2.clearRect(0, 0, w, h);
+
+  // cetvel + saniye ızgarası
+  g2.fillStyle = '#0c1420'; g2.fillRect(0, 0, w, layout.RULER);
+  g2.strokeStyle = '#1a2a3a'; g2.fillStyle = '#5f7d96';
+  g2.font = '10px Consolas'; g2.textBaseline = 'middle';
+  const adim = transport.sure > 40 ? 5 : transport.sure > 16 ? 2 : 1;
+  for (let s = 0; s <= transport.sure + 0.01; s += adim) {
+    const x = tX(s);
+    g2.beginPath(); g2.moveTo(x, 0); g2.lineTo(x, h); g2.globalAlpha = 0.25; g2.stroke(); g2.globalAlpha = 1;
+    g2.fillText(s.toFixed(0) + 's', x + 2, layout.RULER / 2);
+  }
+
+  // şeritler
+  for (const lane of lanes) {
+    // arka plan + etiket
+    g2.fillStyle = lane.i % 2 ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.045)';
+    g2.fillRect(0, lane.yTop, w, lane.laneH);
+    g2.fillStyle = '#0a121c'; g2.fillRect(0, lane.yTop, GUTTER - 2, lane.laneH);
+    g2.fillStyle = lane.renk; g2.font = '11px Consolas'; g2.textBaseline = 'middle';
+    g2.fillText(lane.kanal.hedef, 8, lane.yTop + lane.laneH / 2);
+    g2.fillStyle = '#3a5068'; g2.font = '9px Consolas';
+    g2.fillText(lane.kanal.tip, GUTTER - 42, lane.yTop + 8);
+
+    // eğri (anahtarlar arası ara-değer görselleştirmesi)
+    const a = lane.kanal.anahtarlar;
+    g2.strokeStyle = lane.renk; g2.lineWidth = 1.5; g2.globalAlpha = 0.9;
+    g2.beginPath();
+    const N = Math.max(2, Math.round(layout.W / 4));
+    for (let s = 0; s <= N; s++) {
+      const t = (s / N) * transport.sure;
+      const v = zamanlayici.ornekle(lane.kanal, t);
+      const x = tX(t), y = vY(lane, v);
+      s === 0 ? g2.moveTo(x, y) : g2.lineTo(x, y);
+    }
+    g2.stroke(); g2.globalAlpha = 1; g2.lineWidth = 1;
+
+    // cue noktaları
+    for (const [t, v] of a) {
+      g2.fillStyle = lane.renk;
+      g2.beginPath(); g2.arc(tX(t), vY(lane, v), KEN_R, 0, 7); g2.fill();
+      g2.strokeStyle = '#0a121c'; g2.stroke();
+    }
+  }
+
+  // playhead
+  const px = tX(transport.showT);
+  g2.strokeStyle = '#ffd27f'; g2.lineWidth = 1.5;
+  g2.beginPath(); g2.moveTo(px, 0); g2.lineTo(px, h); g2.stroke(); g2.lineWidth = 1;
+  g2.fillStyle = '#ffd27f';
+  g2.beginPath(); g2.moveTo(px - 5, 0); g2.lineTo(px + 5, 0); g2.lineTo(px, 7); g2.fill();
+}
+
+// --- fare etkileşimi: cue ekle/taşı/sil + scrub ---
+let suru = null;   // {lane, idx} sürüklenen cue
+
+function fareYer(e) {
+  const r = tuval.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+function laneBul(py) { return layout.lanes.find(l => py >= l.yTop && py < l.yTop + l.laneH); }
+function cueBul(px, py) {
+  for (const lane of layout.lanes) {
+    const a = lane.kanal.anahtarlar;
+    for (let i = 0; i < a.length; i++) {
+      const dx = tX(a[i][0]) - px, dy = vY(lane, a[i][1]) - py;
+      if (dx * dx + dy * dy <= (KEN_R + 3) * (KEN_R + 3)) return { lane, idx: i };
+    }
+  }
+  return null;
+}
+
+tuval.addEventListener('pointerdown', (e) => {
+  const { x, y } = fareYer(e);
+  if (y < layout.RULER) {              // cetvel → scrub
+    transport.oynat(false);
+    transport.scrubla(xT(x));
+    suru = { scrub: true };
+    tuval.setPointerCapture(e.pointerId);
+    return;
+  }
+  const hit = cueBul(x, y);
+  if (hit) { suru = hit; tuval.setPointerCapture(e.pointerId); return; }
+  // boş şerit → yeni cue ekle
+  const lane = laneBul(y);
+  if (lane && x > layout.x0) {
+    const t = Math.max(0, Math.min(transport.sure, xT(x)));
+    const v = Math.max(lane.min, Math.min(lane.max, yV(lane, y)));
+    lane.kanal.anahtarlar.push([t, v]);
+    lane.kanal.anahtarlar.sort((p, q) => p[0] - q[0]);
+    suru = { lane, idx: lane.kanal.anahtarlar.findIndex(k => k[0] === t && k[1] === v) };
+    tuval.setPointerCapture(e.pointerId);
+  }
+});
+
+tuval.addEventListener('pointermove', (e) => {
+  if (!suru) return;
+  const { x, y } = fareYer(e);
+  if (suru.scrub) { transport.scrubla(xT(x)); return; }
+  const { lane } = suru;
+  const a = lane.kanal.anahtarlar;
+  // zaman komşularla sınırlı (sıralı kalsın); ilk/son uçlara serbest
+  const prev = suru.idx > 0 ? a[suru.idx - 1][0] + 0.01 : 0;
+  const next = suru.idx < a.length - 1 ? a[suru.idx + 1][0] - 0.01 : transport.sure;
+  a[suru.idx][0] = Math.max(prev, Math.min(next, xT(x)));
+  a[suru.idx][1] = Math.max(lane.min, Math.min(lane.max, yV(lane, y)));
+});
+
+tuval.addEventListener('pointerup', () => { suru = null; });
+
+function cueSil(x, y) {
+  const hit = cueBul(x, y);
+  if (hit && hit.lane.kanal.anahtarlar.length > 1) {
+    hit.lane.kanal.anahtarlar.splice(hit.idx, 1);
+    mesajGoster('cue silindi: ' + hit.lane.kanal.hedef);
+  }
+}
+tuval.addEventListener('dblclick', (e) => { const p = fareYer(e); cueSil(p.x, p.y); });
+tuval.addEventListener('contextmenu', (e) => { e.preventDefault(); const p = fareYer(e); cueSil(p.x, p.y); });
+
+// ============================================================
+// BLOK 11 — DÖNGÜ (Ders 7 + transport + editör çizimi)
+// ============================================================
+const clock = new THREE.Clock();
+let frames = 0, fpsTimer = 0;
+const fpsEl = document.getElementById('fps');
+const saatEl = document.getElementById('saat');
+
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 1 / 20);
+  const showT = transport.tik(dt);          // transport zaman otoritesi
+  const dtFizik = transport.oynuyor ? dt : 0;  // duraklatınca su donar
+
+  zamanlayici.uygula(showT);                 // timeline sahneyi sürer (canlı editlenen dizi)
+  for (const l of Object.values(isiklar)) l.guncelle(showT);
+  for (const c of Object.values(cihazlar)) c.step(dtFizik, showT);
+  controls.update();
+
+  derinlikOnGecisi();
+  composer.render();
+  ciz();                                     // editör tuvalini yeniden çiz (playhead gezsin)
+
+  saatEl.textContent = showT.toFixed(1) + ' / ' + transport.sure.toFixed(1) + ' s';
+  frames++; fpsTimer += dt;
+  if (fpsTimer >= 1) { fpsEl.textContent = frames; frames = 0; fpsTimer = 0; }
+});
+
+// başta bir kare oynat
+transport.oynat(true);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+  cozunurlukGuncelle();
+  tuvalOlcekle();
+});
+tuvalOlcekle();
+
+// Debug kancası.
+//   DERS8.transport.scrubla(13)            → şovu 13s'e getir
+//   DERS8.ZAMAN_CIZELGESI                  → canlı (editörle mutasyonlanan) timeline
+window.DERS8 = { cihazlar, isiklar, ZAMAN_CIZELGESI, zamanlayici, kayit, transport, ortakUniformlar };
+</script>
+</body>
+</html>

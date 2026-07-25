@@ -1,0 +1,718 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>Ders 6 — GPU balistik (fizik CPU'dan GPU'ya · 70k parçacık)</title>
+<style>
+  body { margin: 0; overflow: hidden; background: #000; }
+  #info {
+    position: fixed; top: 8px; left: 8px;
+    color: #8fd3ff; font: 13px/1.5 Consolas, monospace;
+    text-shadow: 0 1px 2px #000;
+  }
+  b { color: #ffd27f; }
+</style>
+</head>
+<body>
+<div id="info">Ders 6 — GPU balistik &middot; fizik <b>vertex/compute shader</b>'da &middot; <span id="sayi">-</span> parçacık &middot; sol tık: döndür · teker: zoom · <span id="fps">-</span> fps</div>
+
+<!-- importmap: Ders 5 ile aynı. addons yolu GPUComputationRenderer için de lazım. -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { GPUComputationRenderer } from 'three/addons/misc/GPUComputationRenderer.js';
+
+// ============================================================
+// DERS 6 — GPU BALİSTİK: FİZİĞİ CPU'DAN GPU'YA TAŞIMAK
+//
+// Ders 3-5'te her parçacığın konum/hızını JS'te, kare başına bir "for"
+// döngüsünde entegre ettik:
+//     vel.y -= G*dt;  pos += vel*dt;  yas += dt;   (CPU, parçacık başına)
+// sonra bütün 'pos' dizisini GPU'ya YÜKLEDİK (needsUpdate=true). Bu iki
+// maliyet parçacık sayısını ~birkaç bine kilitler:
+//   1) JS tek çekirdekte, parçacık başına birkaç aritmetik (yavaş dil).
+//   2) Her kare on binlerce float'ı CPU→GPU kopyalamak (bant genişliği).
+//
+// Bu dersin tezi:
+//
+//   PARÇACIK FİZİĞİ = PARALEL, DURUMSAL BİR HESAP → TAM GPU İŞİ.
+//   Konum/hızı bir DOKUDA (texture) tut, entegrasyonu bir FRAGMENT
+//   shader'da yap, sonucu geri aynı dokuya yaz (ping-pong). CPU sadece
+//   birkaç uniform (nozul konumu, dt) gönderir; on binlerce parçacık
+//   GPU'da AYNI ANDA ilerler. Yükleme YOK — veri hiç GPU'dan çıkmaz.
+//
+// Sonuç: Ders 5'te ~7k parçacıkta ~90fps idik; burada ~70k parçacıkta
+// yine 60fps hedefliyoruz (SCOPE'un "50-100k @ 60fps" araştırma hedefi).
+//
+// TEKNİK: three.js'in GPUComputationRenderer eklentisi. Klasik GPGPU
+// deseni: iki kayan dokulu (double-buffer) "değişken", her kare compute()
+// bir kareyi okuyup diğerine yazar, roller takas edilir.
+//
+//   texturePosition : rgba = (x, y, z, yas)
+//   textureVelocity : rgba = (vx, vy, vz, ömür)
+//
+// GÖRSEL: Ders 5'in gece-çeşmesi (RGB SpotLight + çarpımsal ışık boyama)
+// AYNEN korunur, ama artık su GPU'da yaşıyor ve ~10× daha ince taneli.
+// (Ders 4 dersi: additive'de parlaklık = katman sayısının fonksiyonu →
+// 10× parçacık istiyorsak parçacık başı alfayı ~10× KISMALIYIZ; net
+// kazanç: aynı parlaklıkta çok daha pürüzsüz, gerçekçi su.)
+//
+// ODAK için Ders 5'in volumetrik HÜZME mesh'i (drei tekniği) bu derste
+// YOK — dersin konusu fizik motoru. Işık boyama + gerçek SpotLight'ın
+// zemindeki havuzu korunur, gece hissi bozulmaz.
+// ============================================================
+
+// ============================================================
+// BLOK 1 — SAHNE (Ders 5'ten aynen: karanlık taban, KISIK ambient,
+// ışığı cihaz boyar). Satır satır anlatım Ders 1/5'te.
+// ============================================================
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x050810);
+scene.fog = new THREE.Fog(0x050810, 18, 55);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(7, 4, 11);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 2.5, 0);
+controls.enableDamping = true;
+
+const ground = new THREE.Mesh(
+  new THREE.CircleGeometry(10, 48),
+  new THREE.MeshStandardMaterial({ color: 0x0a1622, roughness: 0.35, metalness: 0.2 })
+);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+scene.add(new THREE.AmbientLight(0x223344, 0.4));
+
+const G = 9.81;  // yerçekimi — hem JS init'te hem GPU shader'da AYNI sabit
+
+// ============================================================
+// BLOK 2 — SPRITE DOKU (Ders 5'ten damlaDoku aynen). Anlatım Ders 2'de.
+// ============================================================
+
+function dokuUret(ciz) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  ciz(c.getContext('2d'), 128);
+  return new THREE.CanvasTexture(c);
+}
+const damlaDoku = dokuUret((ctx, S) => {
+  const g = ctx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  g.addColorStop(0.0,  'rgba(255,255,255,1)');
+  g.addColorStop(0.35, 'rgba(255,255,255,0.75)');
+  g.addColorStop(1.0,  'rgba(255,255,255,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, S, S);
+});
+
+// ============================================================
+// BLOK 3 — SU CİHAZLARI = VERİ (Ders 3-5 tezi korunur)
+//
+// Preset yapısı Ders 5 ile aynı RUHTA, iki fark:
+//   • emission.rate YOK. GPU deseninde parçacıklar ÖLÜMSÜZ: ölünce
+//     serbest-liste'ye gitmez, compute shader onu ANINDA nozuldan
+//     yeniden doğurur (recycle-in-place). Havuz sabit boyuttadır →
+//     EMİSYON ORANI = parçacıkSayısı / ortalamaÖmür. Yani "kaç parçacık"
+//     ve "ne kadar yaşar" oranı belirler; ayrı bir rate uniform'u gerekmez.
+//     Bu, CPU'daki serbest-slot yığınını komple siler (GPU sadeleşmesi).
+//   • sayac: doku kenarı (W=H). parçacıkSayısı = W*H. Kare-sayı seçilir ki
+//     her doku pikseli bir parçacık olsun, boşta piksel kalmasın.
+// ============================================================
+
+const PRESETLER = {
+
+  // DÜZ JET — Ders 5'in jeti. Konum SOLA (kırmızı projektör boyasın).
+  // 176² = 30976 parçacık. Ort. ömür ~2.15s → örtük oran ~14400/s
+  // (Ders 5 CPU'da 1900/s idi). ~7.6× yoğun → alfa 0.55'ten 0.08'e KISILDI
+  // (Ders 4: parlaklık katman sayısıyla ölçekli), boy inceltildi.
+  duz_jet: {
+    konum: [-2, 0, 0],
+    kenar: 176,                                   // doku W=H → 30976 parçacık
+    shape:    { type: 'point', angle: 0.05 },
+    particle: {
+      speed: { a: 10.0, b: 12.0 },
+      life:  { a: 2.0,  b: 2.3  },
+      size:  0.045,
+      color: '#bfe3ff',
+      alpha: 0.08,
+      aeration: 0.35
+    },
+    yumusaklik: 0.4
+  },
+
+  // GEYSER — Ders 5'in geyseri. Konum SAĞA (mavi projektör boyasın).
+  // 196² = 38416 parçacık. Ort. ömür ~1.35s → örtük oran ~28500/s
+  // (CPU'da 4000/s). alfa 0.2'den 0.03'e KISILDI.
+  geyser: {
+    konum: [2, 0, 0],
+    kenar: 196,                                   // 38416 parçacık
+    shape:    { type: 'disc', radius: 0.28, angle: 0.22 },
+    particle: {
+      speed: { a: 5.5, b: 7.0 },
+      life:  { a: 1.2, b: 1.5 },
+      size:  0.06,
+      color: '#e8f4ff',
+      alpha: 0.03,
+      aeration: 0.75
+    },
+    yumusaklik: 0.5
+  }
+};
+
+// ---- 3a. Ortak uniform'lar + IŞIK KÖPRÜSÜ (Ders 5'ten aynen) --------
+// Işık boyama köprüsü Ders 5 BLOK 6 ile birebir; tek fark render vertex
+// shader'ının konumu bir attribute yerine DOKUDAN okuması (BLOK 6).
+const N_ISIK = 4;
+const ortakUniformlar = {
+  uDerinlikDoku: { value: null },
+  uCozunurluk:   { value: new THREE.Vector2() },
+  uKameraYakin:  { value: camera.near },
+  uKameraUzak:   { value: camera.far },
+  uPixelYariCap: { value: 1 },
+  uIsikSayisi: { value: 0 },
+  uIsikPos:    { value: Array.from({ length: N_ISIK }, () => new THREE.Vector3()) },
+  uIsikYon:    { value: Array.from({ length: N_ISIK }, () => new THREE.Vector3(0, 1, 0)) },
+  uIsikCosAci: { value: new Array(N_ISIK).fill(1) },
+  uIsikRenk:   { value: Array.from({ length: N_ISIK }, () => new THREE.Color()) },
+  uIsikTepki:  { value: 1.6 },
+  uTabanIsik:  { value: 0.30 }
+};
+function katmanUniformlari(ozel) {
+  return { ...ortakUniformlar, ...ozel };
+}
+
+// Soft-fade GLSL (Ders 2/5'ten aynen).
+const SOFT_FADE_GLSL = /* glsl */`
+  #include <packing>
+  uniform sampler2D uDerinlikDoku;
+  uniform vec2  uCozunurluk;
+  uniform float uKameraYakin;
+  uniform float uKameraUzak;
+  uniform float uYumusaklik;
+  float softFade(float fragViewZ) {
+    vec2 uv = gl_FragCoord.xy / uCozunurluk;
+    float sahneDerinlik = texture2D(uDerinlikDoku, uv).x;
+    float sahneViewZ = perspectiveDepthToViewZ(sahneDerinlik, uKameraYakin, uKameraUzak);
+    return smoothstep(0.0, uYumusaklik, fragViewZ - sahneViewZ);
+  }
+`;
+
+// ============================================================
+// BLOK 4 — GPU FİZİK ÇEKİRDEĞİ (dersin kalbi)
+//
+// Ortak GLSL: deterministik rastgelelik + koni yönü + disk ofseti.
+// ÖNEMLİ: konum shader'ı ile hız shader'ı AYRI iki programdır ama AYNI
+// karede AYNI önceki-kare dokularını okur → ölüm/yeniden-doğum kararı
+// ikisinde de AYNI çıkar (tutarlılık şart, yoksa parçacık yarı-doğar).
+// Kararı belirleyen tek girdi 'yas' ve 'ömür' — ikisi de dokudan gelir,
+// rastgelelik DEĞİL. Rastgele değerler (yön/hız vs disk) bağımsızdır:
+// konum shader'ı sadece disk ofsetini, hız shader'ı yön+hız+ömrü çeker.
+// ============================================================
+
+const GPU_ORTAK_GLSL = /* glsl */`
+  // Küçük hash (Dave Hoskins deseni, kamu malı): tek float → [0,1).
+  float hash11(float p){ p = fract(p * 0.1031); p *= p + 33.33; p *= p + p; return fract(p); }
+
+  // Deterministik akış: g_seed'i her çağrıda ilerlet → sıralı bağımsız sayılar.
+  float g_seed;
+  float rnd(){ g_seed += 1.0; return hash11(g_seed); }
+
+  // Bir eksen etrafında ortonormal taban (koni/disk için yerel çerçeve).
+  void cerceve(vec3 n, out vec3 t1, out vec3 t2){
+    vec3 up = abs(n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    t1 = normalize(cross(up, n));
+    t2 = cross(n, t1);
+  }
+
+  // Koni içinde alan-düzgün rastgele yön (CPU yonKoni'nin GPU eşi):
+  // azimut düzgün, kutup açısı sqrt ile alan-düzgün.
+  vec3 koniYon(vec3 eksen, float aciMax){
+    vec3 t1, t2; cerceve(eksen, t1, t2);
+    float az = rnd() * 6.2831853;
+    float po = aciMax * sqrt(rnd());
+    return normalize(eksen * cos(po) + (t1 * cos(az) + t2 * sin(az)) * sin(po));
+  }
+`;
+
+// --- Konum entegrasyon shader'ı (texturePosition'a yazar) ---
+// GPUComputationRenderer otomatik enjekte eder: 'uniform vec2 resolution;'
+// ve her değişken için 'uniform sampler2D texturePosition/textureVelocity;'.
+// Biz sadece uv = gl_FragCoord/resolution ile kendi pikselimizi okuruz.
+const konumShader = /* glsl */`
+  uniform float uDt;
+  uniform float uTime;
+  uniform vec3  uNozulPos;
+  uniform vec3  uNozulYon;
+  uniform float uDiskR;
+  ${GPU_ORTAK_GLSL}
+
+  void main(){
+    vec2 uv = gl_FragCoord.xy / resolution.xy;
+    vec4 P = texture2D(texturePosition, uv);   // (x,y,z, yas)
+    vec4 V = texture2D(textureVelocity, uv);   // (vx,vy,vz, ömür)
+    vec3 pos = P.xyz;  float yas  = P.w;
+    vec3 vel = V.xyz;  float omur = V.w;
+
+    // SEMPLEKTİK EULER (CPU ile parite): önce yerçekimi, sonra taşı.
+    // Hız shader'ının bu-kareki çıktısını GÖREMEYİZ (paralel çalışır),
+    // o yüzden yerçekimini BURADA da uygulayıp aynı yeni hızla taşırız.
+    vel.y -= 9.81 * uDt;
+    pos += vel * uDt;
+    yas += uDt;
+
+    // ÖLÜM → YENİDEN DOĞUM (recycle-in-place; serbest-liste yok).
+    // Karar hız shader'ıyla BİREBİR aynı: yas>=ömur veya zemin altı.
+    if (yas >= omur || pos.y < 0.0) {
+      g_seed = dot(uv, vec2(12.9898, 78.233)) + uTime * 7.0 + 3.7;  // disk için ayrı tohum
+      vec3 t1, t2; cerceve(normalize(uNozulYon), t1, t2);
+      float az = rnd() * 6.2831853;
+      float rr = uDiskR * sqrt(rnd());
+      pos = uNozulPos + (t1 * cos(az) + t2 * sin(az)) * rr;
+      yas = 0.0;
+    }
+    gl_FragColor = vec4(pos, yas);
+  }
+`;
+
+// --- Hız entegrasyon shader'ı (textureVelocity'ye yazar) ---
+const hizShader = /* glsl */`
+  uniform float uDt;
+  uniform float uTime;
+  uniform vec3  uNozulYon;
+  uniform float uKoniAci;
+  uniform float uHizA;
+  uniform float uHizB;
+  uniform float uOmurA;
+  uniform float uOmurB;
+  ${GPU_ORTAK_GLSL}
+
+  void main(){
+    vec2 uv = gl_FragCoord.xy / resolution.xy;
+    vec4 P = texture2D(texturePosition, uv);
+    vec4 V = texture2D(textureVelocity, uv);
+    float yas  = P.w;
+    vec3 vel = V.xyz;  float omur = V.w;
+
+    // Aynı önceki-kare verisiyle AYNI ölüm kararı (konum shader'ı ile eş).
+    vec3 yeniVel = vel;  yeniVel.y -= 9.81 * uDt;
+    vec3 yeniPos = P.xyz + yeniVel * uDt;     // yalnız y<0 testi için
+    float yeniYas = yas + uDt;
+
+    if (yeniYas >= omur || yeniPos.y < 0.0) {
+      g_seed = dot(uv, vec2(12.9898, 78.233)) + uTime * 7.0;   // yön/hız için ayrı tohum
+      vec3 yon = koniYon(normalize(uNozulYon), uKoniAci);
+      float hiz  = uHizA  + rnd() * (uHizB  - uHizA);
+      omur       = uOmurA + rnd() * (uOmurB - uOmurA);
+      yeniVel = yon * hiz;
+    }
+    gl_FragColor = vec4(yeniVel, omur);
+  }
+`;
+
+// ---- 4a. JS init: ANALİTİK ÖN-ISITMA -------------------------------
+// Ders 3-5'te prewarm(2.5) = fiziği 2.5s CPU'da elle döndürmekti. GPU'da
+// bunu ANALİTİK yaparız: her parçacığı doğrudan uçuşunun rastgele bir
+// t0 anına yerleştir (kapalı-form balistik), sahne ilk kareden dolu açılsın.
+//   pos(t0) = pos0 + v0*t0 + ½·g·t0²   ,   vel(t0) = v0 + g·t0
+const _t1 = new THREE.Vector3(), _t2 = new THREE.Vector3();
+function cerceveJS(n, t1, t2) {
+  const up = Math.abs(n.y) < 0.99 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+  t1.crossVectors(up, n).normalize();
+  t2.crossVectors(n, t1);
+}
+function koniYonJS(eksen, aciMax, hedef) {
+  cerceveJS(eksen, _t1, _t2);
+  const az = Math.random() * Math.PI * 2;
+  const po = aciMax * Math.sqrt(Math.random());
+  hedef.copy(eksen).multiplyScalar(Math.cos(po))
+    .addScaledVector(_t1, Math.cos(az) * Math.sin(po))
+    .addScaledVector(_t2, Math.sin(az) * Math.sin(po));
+}
+
+// ============================================================
+// BLOK 5 — GpuParcaSistemi: preset → GPU motor (Ders 3 CihazSistemi'nin
+// GPU muadili). CPU'daki pos/vel/yas/omur dizileri + step() döngüsü +
+// serbest-liste TAMAMEN gitti; yerine iki compute değişkeni + render
+// için doku-okuyan bir ShaderMaterial geldi.
+// ============================================================
+
+const _eksen = new THREE.Vector3(0, 1, 0);   // nozul yönü (dik yukarı; presetler tilt'siz)
+const _v0 = new THREE.Vector3(), _p = new THREE.Vector3(), _v = new THREE.Vector3();
+
+class GpuParcaSistemi {
+  constructor(preset) {
+    this.preset = preset;
+    const W = preset.kenar, H = preset.kenar;
+    this.sayi = W * H;
+    const p = preset.particle;
+
+    const nozul = new THREE.Vector3().fromArray(preset.konum);   // tilt yok → dünya = konum
+    const diskR = preset.shape.type === 'disc' ? preset.shape.radius : 0.0;
+    const koniAci = preset.shape.angle;
+
+    // --- GPGPU kurulumu ---
+    this.gpu = new GPUComputationRenderer(W, H, renderer);
+    // FloatType ŞART: konumlar ~±10m; HalfFloat (varsayılan) ~3 hane hassas
+    // → 10.00'da ~1cm titreme. Full float pürüzsüz akış verir.
+    this.gpu.setDataType(THREE.FloatType);
+
+    const dtPos = this.gpu.createTexture();
+    const dtVel = this.gpu.createTexture();
+    const posD = dtPos.image.data, velD = dtVel.image.data;   // Float32Array, W*H*4
+
+    // ANALİTİK init: her parçacığı uçuşunun rastgele bir anına koy.
+    for (let i = 0; i < this.sayi; i++) {
+      const hiz  = p.speed.a + Math.random() * (p.speed.b - p.speed.a);
+      const omur = p.life.a  + Math.random() * (p.life.b  - p.life.a);
+      const t0   = Math.random() * omur;
+
+      koniYonJS(_eksen, koniAci, _v0);          // birim yön
+      _v0.multiplyScalar(hiz);                  // v0 = yön·hız
+
+      // doğum konumu: nozul + disk ofseti (disk düzlemi eksen'e dik)
+      _p.copy(nozul);
+      if (diskR > 0) {
+        cerceveJS(_eksen, _t1, _t2);
+        const a = Math.random() * Math.PI * 2;
+        const r = diskR * Math.sqrt(Math.random());
+        _p.addScaledVector(_t1, Math.cos(a) * r).addScaledVector(_t2, Math.sin(a) * r);
+      }
+
+      // kapalı-form balistik t0 anı
+      _p.addScaledVector(_v0, t0);
+      _p.y -= 0.5 * G * t0 * t0;
+      _v.copy(_v0);  _v.y -= G * t0;
+
+      const k = i * 4;
+      posD[k] = _p.x; posD[k + 1] = _p.y; posD[k + 2] = _p.z; posD[k + 3] = t0;      // yas
+      velD[k] = _v.x; velD[k + 1] = _v.y; velD[k + 2] = _v.z; velD[k + 3] = omur;    // ömür
+    }
+
+    // Değişkenler + karşılıklı bağımlılık (her ikisi her ikisini okur).
+    this.posVar = this.gpu.addVariable('texturePosition', konumShader, dtPos);
+    this.velVar = this.gpu.addVariable('textureVelocity', hizShader, dtVel);
+    this.gpu.setVariableDependencies(this.posVar, [this.posVar, this.velVar]);
+    this.gpu.setVariableDependencies(this.velVar, [this.posVar, this.velVar]);
+
+    // Emitter uniform'ları (compute shader'lara köprü).
+    Object.assign(this.posVar.material.uniforms, {
+      uDt: { value: 0 }, uTime: { value: 0 },
+      uNozulPos: { value: nozul.clone() }, uNozulYon: { value: _eksen.clone() },
+      uDiskR: { value: diskR }
+    });
+    Object.assign(this.velVar.material.uniforms, {
+      uDt: { value: 0 }, uTime: { value: 0 },
+      uNozulYon: { value: _eksen.clone() }, uKoniAci: { value: koniAci },
+      uHizA: { value: p.speed.a }, uHizB: { value: p.speed.b },
+      uOmurA: { value: p.life.a }, uOmurB: { value: p.life.b }
+    });
+
+    const hata = this.gpu.init();
+    if (hata) console.error('GPUComputationRenderer:', hata);
+
+    // --- Render: doku-okuyan Points malzemesi (BLOK 6) ---
+    // Her parçacık için bir referans UV (doku pikseli) + bir taban boy.
+    const aRef = new Float32Array(this.sayi * 2);
+    const aSize = new Float32Array(this.sayi);
+    for (let i = 0; i < this.sayi; i++) {
+      aRef[i * 2]     = ((i % W) + 0.5) / W;
+      aRef[i * 2 + 1] = (Math.floor(i / W) + 0.5) / H;
+      aSize[i] = p.size * (0.7 + Math.random() * 0.6);
+    }
+    this.geo = new THREE.BufferGeometry();
+    // 'position' dummy (konum shader'dan gelir) ama three bir position ister.
+    this.geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.sayi * 3), 3));
+    this.geo.setAttribute('aRef',  new THREE.BufferAttribute(aRef, 2));
+    this.geo.setAttribute('aSize', new THREE.BufferAttribute(aSize, 1));
+
+    this.mat = new THREE.ShaderMaterial({
+      uniforms: katmanUniformlari({
+        uPosTex:     { value: null },        // her kare compute sonrası bağlanır
+        uVelTex:     { value: null },
+        uDoku:       { value: damlaDoku },
+        uRenk:       { value: new THREE.Color(p.color) },
+        uAlfa:       { value: p.alpha },
+        uAeration:   { value: p.aeration },
+        uYumusaklik: { value: preset.yumusaklik }
+      }),
+      vertexShader: renderVertex,
+      fragmentShader: renderFragment,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
+
+    this.points = new THREE.Points(this.geo, this.mat);
+    this.points.frustumCulled = false;   // konum GPU'da; CPU bbox bilmez
+    scene.add(this.points);
+  }
+
+  step(dt, t) {
+    // 1) uniform'ları tazele (tek CPU→GPU trafiği = birkaç float!)
+    for (const v of [this.posVar, this.velVar]) {
+      v.material.uniforms.uDt.value = dt;
+      v.material.uniforms.uTime.value = t;
+    }
+    // 2) GPU'da bir fizik adımı (ping-pong): tüm parçacıklar aynı anda.
+    this.gpu.compute();
+    // 3) güncel konum/hız dokularını render malzemesine bağla.
+    this.mat.uniforms.uPosTex.value = this.gpu.getCurrentRenderTarget(this.posVar).texture;
+    this.mat.uniforms.uVelTex.value = this.gpu.getCurrentRenderTarget(this.velVar).texture;
+  }
+}
+
+// ============================================================
+// BLOK 6 — RENDER SHADER'LARI (Ders 5 + tek yapısal değişiklik)
+//
+// Ders 5'te vertex, konumu 'position' ATTRIBUTE'undan okuyordu (CPU her
+// kare doldururdu). Burada konum GPU dokusundadır → vertex onu
+// texture2D(uPosTex, aRef) ile OKUR. Gerisi (ışık boyama, köpük, çarpımsal
+// ışık) Ders 5 ile birebir. Ölü-slot klipi GEREKMEZ: parçacıklar ölümsüz.
+// ============================================================
+
+const renderVertex = /* glsl */`
+  attribute vec2  aRef;    // bu parçacığın konum/hız dokusundaki pikseli
+  attribute float aSize;   // metre — init'te örneklenmiş taban boy
+  uniform sampler2D uPosTex;
+  uniform sampler2D uVelTex;
+  uniform float uPixelYariCap;
+
+  // Işık boyama köprüsü (Ders 5 BLOK 6 aynen).
+  uniform int   uIsikSayisi;
+  uniform vec3  uIsikPos[4];
+  uniform vec3  uIsikYon[4];
+  uniform float uIsikCosAci[4];
+  uniform vec3  uIsikRenk[4];
+
+  varying float vVy;
+  varying float vAge;
+  varying float vViewZ;
+  varying vec3  vIsik;
+
+  void main() {
+    vec4 P = texture2D(uPosTex, aRef);   // (x,y,z, yas)
+    vec4 V = texture2D(uVelTex, aRef);   // (vx,vy,vz, ömür)
+    vec3 worldPos = P.xyz;
+    vVy  = V.y;
+    vAge = clamp(P.w / max(V.w, 1e-4), 0.0, 1.0);
+
+    // IŞIK BOYAMASI (Ders 5): parçacık başına bir kez, her ışık için inCone×att.
+    vIsik = vec3(0.0);
+    for (int i = 0; i < 4; i++) {
+      if (i >= uIsikSayisi) break;
+      vec3 d = worldPos - uIsikPos[i];
+      float dist = length(d);
+      vec3 L = d / max(dist, 1e-4);
+      float inCone = smoothstep(uIsikCosAci[i] - 0.05, uIsikCosAci[i], dot(L, uIsikYon[i]));
+      float att = 1.0 / (1.0 + 0.12 * dist * dist);
+      vIsik += uIsikRenk[i] * inCone * att;
+    }
+    float m = max(vIsik.r, max(vIsik.g, vIsik.b));   // HSV-V clamp (beyaza patlamayı sınırla)
+    if (m > 1.0) vIsik /= m;
+
+    // worldPos zaten DÜNYA uzayında → modelMatrix'i atla, viewMatrix yeter.
+    vec4 mvPosition = viewMatrix * vec4(worldPos, 1.0);
+    vViewZ = mvPosition.z;
+    gl_PointSize = aSize * (uPixelYariCap / -mvPosition.z);
+    gl_Position = projectionMatrix * mvPosition;
+  }
+`;
+
+const renderFragment = /* glsl */`
+  uniform sampler2D uDoku;
+  uniform vec3  uRenk;
+  uniform float uAlfa;
+  uniform float uAeration;
+  uniform float uIsikTepki;
+  uniform float uTabanIsik;
+  varying float vVy;
+  varying float vAge;
+  varying float vViewZ;
+  varying vec3  vIsik;
+  ${SOFT_FADE_GLSL}
+
+  void main() {
+    float doku = texture2D(uDoku, gl_PointCoord).a;
+    if (doku < 0.01) discard;
+
+    float hizKopuk = 1.0 - smoothstep(0.5, 3.0, abs(vVy));
+    float kopuk = max(uAeration, hizKopuk);
+    vec3 albedo = mix(uRenk, vec3(1.0), kopuk * 0.9);
+
+    // çarpımsal ışık (Ders 5 kalbi): görünen = albedo·(taban + Σışık)
+    vec3 renk = albedo * (uTabanIsik + vIsik * uIsikTepki);
+
+    float alfa = uAlfa * doku * mix(1.0, 1.8, kopuk);
+    alfa *= 1.0 - smoothstep(0.75, 1.0, vAge);
+    alfa *= softFade(vViewZ);
+    gl_FragColor = vec4(renk, alfa);
+  }
+`;
+
+// ============================================================
+// BLOK 7 — IŞIK PRESET'LERİ + IsikSistemi (Ders 5'ten, hüzme mesh'siz)
+//
+// Işık de VERİ (Ders 5 tezi). Bu derste odak fizik olduğu için volumetrik
+// hüzme mesh'i çıkarıldı; kalan: renk döngüsü + gerçek SpotLight (zemin
+// havuzu) + parçacık ışık köprüsü. Görsel gece hissi bu üçüyle ayakta.
+// ============================================================
+
+const ISIK_PRESETLER = {
+  spot_kirmizi: {
+    konum: [-4, 0.3, 3], hedef: [-2, 3, 0], aciDeg: 22, menzil: 14, spotSiddet: 60,
+    hueBasla: 0.00, hizHue: 0.020, doygunluk: 1.0, parlaklik: 0.50
+  },
+  spot_mavi: {
+    konum: [4, 0.3, 3], hedef: [2, 3, 0], aciDeg: 26, menzil: 14, spotSiddet: 60,
+    hueBasla: 0.60, hizHue: 0.025, doygunluk: 1.0, parlaklik: 0.50
+  },
+  spot_yesil: {
+    konum: [0, 0.3, -4], hedef: [0, 4, 0], aciDeg: 30, menzil: 15, spotSiddet: 50,
+    hueBasla: 0.33, hizHue: 0.018, doygunluk: 0.9, parlaklik: 0.50
+  }
+};
+
+class IsikSistemi {
+  constructor(preset, index) {
+    this.preset = preset;
+    this.index = index;
+    this.pos   = new THREE.Vector3().fromArray(preset.konum);
+    this.hedef = new THREE.Vector3().fromArray(preset.hedef);
+    this.aciRad = THREE.MathUtils.degToRad(preset.aciDeg);
+    this.renk = new THREE.Color();
+    this.yon = new THREE.Vector3().subVectors(this.hedef, this.pos).normalize();
+    this.cosAci = Math.cos(this.aciRad);
+
+    this.spot = new THREE.SpotLight(0xffffff, preset.spotSiddet, preset.menzil,
+                                    this.aciRad, 0.6, 1.2);
+    this.spot.position.copy(this.pos);
+    this.spot.target.position.copy(this.hedef);
+    scene.add(this.spot);
+    scene.add(this.spot.target);   // target sahneye eklenmeli (r166 tuzağı)
+  }
+  guncelle(t) {
+    const pr = this.preset;
+    let hue = (pr.hueBasla + t * pr.hizHue) % 1.0;
+    if (hue < 0) hue += 1.0;
+    this.renk.setHSL(hue, pr.doygunluk, pr.parlaklik);
+    this.spot.color.copy(this.renk);
+    // parçacık köprüsü (Ders 5 BLOK 6)
+    ortakUniformlar.uIsikPos.value[this.index].copy(this.pos);
+    ortakUniformlar.uIsikYon.value[this.index].copy(this.yon);
+    ortakUniformlar.uIsikCosAci.value[this.index] = this.cosAci;
+    ortakUniformlar.uIsikRenk.value[this.index].copy(this.renk);
+  }
+}
+
+// --- Doğuşlar: veri → motor ---
+const cihazlar = {};
+for (const [ad, preset] of Object.entries(PRESETLER)) {
+  cihazlar[ad] = new GpuParcaSistemi(preset);
+}
+const isiklar = {};
+let isikIdx = 0;
+for (const [ad, preset] of Object.entries(ISIK_PRESETLER)) {
+  isiklar[ad] = new IsikSistemi(preset, isikIdx++);
+}
+ortakUniformlar.uIsikSayisi.value = isikIdx;
+
+const toplamParca = Object.values(cihazlar).reduce((s, c) => s + c.sayi, 0);
+document.getElementById('sayi').textContent = toplamParca.toLocaleString('tr-TR');
+
+// ============================================================
+// BLOK 8 — SOFT PARTICLES + BLOOM + DÖNGÜ (Ders 5'ten aynen).
+// Fark: cihaz.step() artık GPU compute; her kare önce compute, sonra
+// derinlik ön-geçişi, sonra composer. Sıra: ışık köprüsü → GPU fizik →
+// derinlik → bloom.
+// ============================================================
+
+const dbBoyut = new THREE.Vector2();
+renderer.getDrawingBufferSize(dbBoyut);
+const depthTarget = new THREE.WebGLRenderTarget(dbBoyut.x, dbBoyut.y, {
+  depthBuffer: true, stencilBuffer: false
+});
+depthTarget.depthTexture = new THREE.DepthTexture(dbBoyut.x, dbBoyut.y);
+depthTarget.depthTexture.format = THREE.DepthFormat;
+depthTarget.depthTexture.type = THREE.UnsignedIntType;
+ortakUniformlar.uDerinlikDoku.value = depthTarget.depthTexture;
+
+const gizlenecekler = Object.values(cihazlar).map(c => c.points);
+
+function derinlikOnGecisi() {
+  for (const k of gizlenecekler) k.visible = false;
+  renderer.setRenderTarget(depthTarget);
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(null);
+  for (const k of gizlenecekler) k.visible = true;
+}
+function cozunurlukGuncelle() {
+  renderer.getDrawingBufferSize(dbBoyut);
+  depthTarget.setSize(dbBoyut.x, dbBoyut.y);
+  ortakUniformlar.uCozunurluk.value.copy(dbBoyut);
+  ortakUniformlar.uPixelYariCap.value = dbBoyut.y * 0.5;
+}
+cozunurlukGuncelle();
+
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloomPass = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.7, 0.5, 0.25);
+composer.addPass(bloomPass);
+composer.addPass(new OutputPass());
+
+const clock = new THREE.Clock();
+let simZaman = 0;
+let frames = 0, fpsTimer = 0;
+const fpsEl = document.getElementById('fps');
+
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 1 / 20);   // dev dt sıçramasını kırp
+  simZaman += dt;
+
+  for (const l of Object.values(isiklar)) l.guncelle(simZaman);   // ışık köprüsü ÖNCE
+  for (const c of Object.values(cihazlar)) c.step(dt, simZaman);  // GPU fizik adımı
+  controls.update();
+
+  derinlikOnGecisi();
+  composer.render();
+
+  frames++; fpsTimer += dt;
+  if (fpsTimer >= 1) { fpsEl.textContent = frames; frames = 0; fpsTimer = 0; }
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+  cozunurlukGuncelle();
+});
+
+// Debug kancası. Örn:
+//   DERS6.cihazlar.duz_jet.sayi                          → parçacık sayısı
+//   DERS6.cihazlar.geyser.mat.uniforms.uAlfa.value = 0.06  → geyseri koyulaştır
+//   DERS6.ortakUniformlar.uIsikTepki.value = 2.5          → suyun renk alışını artır
+//   DERS6.isiklar.spot_kirmizi.preset.hizHue = 0.1        → hızlı renk döngüsü
+window.DERS6 = { cihazlar, isiklar, PRESETLER, ISIK_PRESETLER, renderer, scene, camera, ortakUniformlar };
+</script>
+</body>
+</html>

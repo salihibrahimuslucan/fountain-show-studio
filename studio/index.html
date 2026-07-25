@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>Aquatronic Show Studio</title>
+<link rel="stylesheet" href="css/studio.css">
+</head>
+<body class="mod-sov">
+<div id="webgl-uyari" hidden>Bu uygulama WebGL2 ister — güncel Chrome/Edge/Firefox kullanın.</div>
+
+<!-- İKONLAR (ui-kimlik turu, 2026-07-19)
+     NEYDİ: her düğme emoji etiketliydi (⏪ ⏩ 🎵 🔴 💾 📁 📂 ⌂ 📏 🎨 🎼).
+     NEDEN DEĞİŞTİ: emoji her platformda BAŞKA çizilir, taban çizgisine oturmaz
+     ve renkli olduğu için "tek vurgu rengi" disiplinini deler — arayüz amatör
+     görünür. Yerine 16×16 inline SVG: stroke="currentColor" olduğu için ikon
+     düğmenin metin rengini miras alır (hover/aktif/disabled durumları bedava
+     doğru olur) ve harici istek/CDN YOK — file:// altında da çalışır. -->
+
+<!-- ŞOV MODU katmanı -->
+<div id="sov-ui">
+  <div id="logo">AQUATRONIC SHOW STUDIO</div>
+  <div id="sov-cetvel"><div id="sov-cetvel-dolu"></div></div>
+  <div id="sov-transport">
+    <button id="geri10" title="10 sn geri (←)" aria-label="10 saniye geri sar">
+      <svg viewBox="0 0 16 16" width="16" height="16" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M8 3.5 2.5 8 8 12.5z"/><path d="M14 3.5 8.5 8 14 12.5z"/></svg>
+    </button>
+    <!-- #oynat: İKİ ikon da burada durur, hangisinin görüneceğini CSS `data-durum`a
+         bakarak seçer. ana.js artık textContent DEĞİL dataset yazıyor → SVG'ler
+         silinmiyor (eski "Segoe UI Symbol" yaması kalktı). -->
+    <button id="oynat" data-durum="oynuyor" title="oynat / duraklat (boşluk)" aria-label="oynat / duraklat">
+      <svg class="ik-oynat" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true" focusable="false"><path d="M4.5 2.75 13 8l-8.5 5.25z"/></svg>
+      <svg class="ik-duraklat" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true" focusable="false"><rect x="4" y="2.75" width="3" height="10.5" rx="1"/><rect x="9" y="2.75" width="3" height="10.5" rx="1"/></svg>
+    </button>
+    <button id="ileri10" title="10 sn ileri (→)" aria-label="10 saniye ileri sar">
+      <svg viewBox="0 0 16 16" width="16" height="16" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M8 3.5 13.5 8 8 12.5z"/><path d="M2 3.5 7.5 8 2 12.5z"/></svg>
+    </button>
+    <span id="saat">0.0 / 0.0 s</span>
+    <label class="dosya" title="müzik dosyası yükle" aria-label="müzik dosyası yükle">
+      <svg viewBox="0 0 16 16" width="16" height="16" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6 12V3.5l7-1.5v8.5"/><circle cx="4.25" cy="12" r="1.75"/><circle cx="11.25" cy="10.5" r="1.75"/></svg>
+      <input id="muzikDosya" type="file" accept="audio/*" hidden>
+    </label>
+    <!-- Ses sözleşmesi (2026-07-23): .aqshow MÜZİK TAŞIMAZ. Örnek şovlar gerçek
+         parçalara bestelendi ama parça telif nedeniyle pakete giremez. Sessiz
+         açılan şovda kullanıcı yalnız su çarpma SFX'ini duyuyordu ("arkada pat
+         pat pat aptal bir ses var" — Salih). Bu rozet durumu SÜREKLİ gösterir;
+         geçici mesaj kaçırılıyordu. Metnini ana.js yazar. -->
+    <span id="muzik-durum" hidden></span>
+    <!-- #kayit: #oynat ile aynı desen — iki ikon, seçimi CSS `data-durum` yapar. -->
+    <button id="kayit" data-durum="bekliyor" title="video kaydı başlat / durdur" aria-label="video kaydı başlat veya durdur">
+      <svg class="ik-kayit" viewBox="0 0 16 16" width="16" height="16" stroke="currentColor" fill="none" stroke-width="1.6" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="4.25" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="6.5"/></svg>
+      <svg class="ik-dur" viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true" focusable="false"><rect x="3.5" y="3.5" width="9" height="9" rx="1.5"/></svg>
+    </button>
+    <span id="mod-ipucu">[TAB] editör</span>
+  </div>
+</div>
+
+<!-- EDİTÖR MODU katmanı -->
+<div id="editor-ui" hidden>
+  <div id="ustbar">
+    <button id="mod-sov-btn">ŞOV [TAB]</button>
+    <div class="kume" aria-label="dosya">
+      <select id="ornek"><option value="">Örnek şov…</option><option value="mozart-daire">Mozart — daire</option><option value="one-more-time-izgara">One More Time — ızgara</option><option value="veridis-quo-kovan">Veridis Quo — kovan</option><option value="atmosphere-izgara">Atmosphere — ızgara</option><option value="blinding-lights-cizgi">Blinding Lights — çizgi</option><option value="territory-daire">Territory — daire</option><option value="cant-get-you-cizgi">Can't Get You — çizgi</option></select>
+      <button id="proje-kaydet" class="birincil" title="projeyi kaydet (.aqshow)" aria-label="projeyi kaydet">
+        <svg viewBox="0 0 16 16" width="16" height="16" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M8 2v7.5"/><path d="M5 6.75 8 9.75l3-3"/><path d="M2.5 11.5v2h11v-2"/></svg>
+      </button>
+      <label class="dosya" title="proje aç" aria-label="proje dosyası aç">
+        <svg viewBox="0 0 16 16" width="16" height="16" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M1.75 12.75v-9h4l1.5 2h7v7z"/></svg>
+        <input id="projeDosya" type="file" accept=".aqshow,.json" hidden>
+      </label>
+      <button id="disari">JSON</button>
+    </div>
+    <div class="kume" aria-label="sahne">
+      <button id="gorunum-plan" class="aktif">PLAN</button>
+      <button id="gorunum-sahne">SAHNE</button>
+      <label class="dosya" title="plan altlığı yükle (DXF veya görsel)">
+        <svg viewBox="0 0 16 16" width="16" height="16" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M1.75 12.75v-9h4l1.5 2h5.25v2"/><path d="M1.75 12.75 4 7.25h10.25l-2.25 5.5z"/></svg>
+        DXF/PNG<input id="planDosya" type="file" accept=".dxf,image/*" hidden></label>
+      <select id="sablon"><option value="">Şablon…</option><option value="daire">daire havuz</option><option value="ariKovani">arı kovanı (kuru)</option><option value="cizgi">çizgi kanal</option><option value="izgara">ızgara matris</option></select>
+      <button id="kalibre" title="plan ölçeğini kalibre et">
+        <svg viewBox="0 0 16 16" width="16" height="16" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M1.5 10.25 10.25 1.5l4.25 4.25-8.75 8.75z"/><path d="M4.75 7 6.25 8.5M7 4.75 8.5 6.25M9.25 2.5l1.5 1.5"/></svg>
+        ölçek</button>
+      <select id="fon"></select>
+    </div>
+    <div class="kume" aria-label="müzik">
+      <label class="dosya" title="müzik dosyası yükle">
+        <svg viewBox="0 0 16 16" width="16" height="16" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6 12V3.5l7-1.5v8.5"/><circle cx="4.25" cy="12" r="1.75"/><circle cx="11.25" cy="10.5" r="1.75"/></svg>
+        müzik<input id="muzikDosya2" type="file" accept="audio/*" hidden></label>
+      <select id="sentetik"><option value="">Örnek parça…</option><option value="enerjik">enerjik (120bpm)</option><option value="ambient">ambient</option><option value="mars">marş vuruşlu</option></select>
+      <button id="bestele" class="birincil" title="müziğe göre şov bestele">
+        <svg viewBox="0 0 16 16" width="16" height="16" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M2 4.25h12M2 7.5h12M2 10.75h7"/><path d="M12 14V9.75l2.25-.5V13"/><circle cx="11" cy="14" r="1.1"/></svg>
+        bestele</button>
+      <select id="desen"><option value="">Desen…</option><option value="rainbow">rainbow</option><option value="chase">chase</option><option value="fade">fade (gün batımı)</option><option value="strobe">strobe</option></select>
+      <!-- #dongu: metnini ana.js yazıyor ("⟳ açık") → #oynat ile aynı gerekçe -->
+      <!-- #dongu: ikon sabit, yalnız durum metni değişir → ana.js #dongu-durum
+           span'ını yazar, düğmenin kendi içeriğine dokunmaz. aria-pressed ekran
+           okuyucuya açık/kapalı durumunu ayrıca söyler. -->
+      <button id="dongu" aria-pressed="true" title="döngü aç / kapat" aria-label="döngü aç veya kapat">
+        <svg viewBox="0 0 16 16" width="16" height="16" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 6.5A3.5 3.5 0 0 1 6.5 3h5.25"/><path d="M9.75 1.25 12 3.5 9.75 5.75"/><path d="M13 9.5a3.5 3.5 0 0 1-3.5 3.5H4.25"/><path d="M6.25 14.75 4 12.5l2.25-2.25"/></svg>
+        <span id="dongu-durum">açık</span>
+      </button>
+    </div>
+    <span class="ayr"></span>
+    <span id="proje-ad">adsiz.aqshow</span>
+  </div>
+  <div id="orta">
+    <div id="palet">
+      <div class="baslik">ÜRÜN PALETİ</div>
+      <!-- düğmeler katalogdan üretilir (T-E): ana.js paletKur → data/katalog.js -->
+    </div>
+    <canvas id="plan-tuval"></canvas>
+    <div id="panel">
+      <div class="baslik">SEÇİLİ CİHAZ</div>
+      <div id="panel-icerik">—</div>
+      <!-- İŞ3 tık.2: seçili cihazın playhead'deki rengi (küçük renk karesi) -->
+      <div id="panel-renk" hidden><span id="panel-swatch"></span><span id="panel-renk-yazi" class="sayi">—</span></div>
+      <!-- İŞ3 tık.3: cihazın açma/kapama anahtarı (master) — playhead'de anahtar yazar -->
+      <button id="cihaz-guc" hidden aria-pressed="false" title="cihazı bu anda aç/kapat (master kanalına anahtar yazar)"><span id="cihaz-guc-nokta">○</span> <span id="cihaz-guc-yazi">KAPALI</span></button>
+      <!-- Faz 1 Task 3 (K2 künye-tabanlı, F1-3): 412C ışık modülü — 412C takılabilen cihazlarda görünür (isikModulAlirMi), entegre ürünlerde (DryDECK) gizli — ana.js panelGuncelle yönetir -->
+      <label id="panel-ozisik" hidden title="412C ışık modülü — kapalıyken kolon kendi RGBW'siyle boyanmaz (bağımsız 412C ışığı yine boyar)"><input id="ozisik-kutu" type="checkbox"> 412C ışık modülü</label>
+      <!-- F1 Task 9b: çoklu seçim (≥2, plan.cokluIdler) iken görünür — ana.js panelGuncelle yönetir -->
+      <button id="grupla" class="birincil" hidden title="seçili cihazları gruplandır">Grupla</button>
+      <button id="cihaz-sil" class="sessiz" hidden>× kaldır</button>
+
+      <!-- F1 Task 9b: grup paneli — bir grup seçiliyken (ana.js secilGrupId) görünür -->
+      <div id="grup-panel" hidden>
+        <div class="baslik">GRUP</div>
+        <label>ad
+          <input id="grup-ad" type="text" placeholder="grup adı">
+        </label>
+        <label>rol
+          <select id="grup-rol">
+            <option value="ritim">ritim</option>
+            <option value="melodi">melodi</option>
+            <option value="vurgu">vurgu</option>
+            <option value="ambiyans">ambiyans</option>
+          </select>
+        </label>
+        <label>dizilim
+          <select id="grup-dizilim">
+            <option value="halka">halka</option>
+            <option value="hat">hat</option>
+            <option value="yay">yay</option>
+            <option value="serbest">serbest</option>
+          </select>
+        </label>
+        <label>desen
+          <select id="grup-desen">
+            <option value="">Desen…</option>
+            <option value="dalga">dalga</option>
+            <option value="karsilikli">karşılıklı</option>
+            <option value="chase">chase</option>
+            <option value="merdiven">merdiven</option>
+            <option value="unison">unison</option>
+          </select>
+        </label>
+        <label>periyot <span id="grup-periyot-yazi" class="sayi">2.0s</span>
+          <input id="grup-periyot" type="range" min="0.5" max="8" step="0.1" value="2">
+        </label>
+        <button id="desen-uygula" class="birincil">desen uygula</button>
+        <!-- F1 Task 10: yalnız grubun üyelerinde ≥1 elle-damgalı kanal VARKEN görünür
+             (ana.js panelGuncelle yönetir — #cihaz-sil/#grupla ile aynı [hidden] disiplini) -->
+        <button id="gruba-dondur" class="sessiz" hidden title="grup üyelerinin elle düzenlenmiş kanallarındaki damgayı temizler ve son deseni yeniden derler">gruba döndür</button>
+      </div>
+    </div>
+  </div>
+  <div id="serit-kap">
+    <div id="serit-ayrac" title="şerit yüksekliği — sürükle"></div>
+    <div id="serit-bar">
+      <span class="baslik">ŞERİT</span>
+      <button class="cip aktif" data-filtre="">tümü</button>
+      <button class="cip" data-filtre="master" title="master = cihazın açma/kapama anahtarı (açık/kapalı)">master <span class="cip-ipucu">açık/kapalı</span></button>
+      <button class="cip" data-filtre="hiz">hız</button>
+      <button class="cip" data-filtre="hue">renk</button>
+      <button class="cip" data-filtre="parlaklik">parlaklık</button>
+      <button class="cip" data-filtre="servo">pan/tilt</button>
+      <span id="zoom-bilgi" class="sayi">1.0×</span>
+    </div>
+    <canvas id="serit-tuval"></canvas>
+  </div>
+</div>
+
+<div id="mesaj"></div>
+
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/three.module.js",
+               "three/addons/": "./vendor/three/jsm/" } }
+</script>
+<script type="module" src="js/ana.js"></script>
+</body>
+</html>
