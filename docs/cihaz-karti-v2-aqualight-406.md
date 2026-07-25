@@ -14,25 +14,11 @@ Etiketler: ✅ spec-sheet-ozeti'nden doğrulandı · ⚠ çıkarım/tutarsızlı
 
 ---
 
-## 1. Künye (✅ spec-sheet-ozeti §10 birebir)
+## 1. Künye — public sürümde çıkarıldı
 
-| Alan | Değer |
-|---|---|
-| Model | AquaLIGHT 406 |
-| Boyut (ØxH) | 160 × 70 mm |
-| Voltaj | 24 VDC |
-| Güç | **22 W** |
-| Akım | **0.9 A** |
-| Renkler | RGB+WW / RGB+AA |
-| LED tipi | Edison PowerLED (bu PDF'te "CREE" ibaresi YOK — 406C'de vardı) |
-| Işık akısı | 1746 lm (RGB full) |
-| Güç & DMX | Combo Cable |
-| Kontrol | DMX + RDM |
-| Koruma | IP68 |
-| Malzeme | Paslanmaz çelik, temperli cam |
-| Ağırlık | 1.3 kg |
-| Ürün No | **PDF'te basılı değil** (boş bırakılmış) |
-| Simülasyon kütüphanesi | Syncronorm Depence Library mevcut |
+Ürün künye tabloları (parça numarası, ölçü, ağırlık, gerilim, güç) üreticinin
+ürün kataloğuna aittir ve bu public sürümde yer almaz. Motorun simülasyon için
+kullandığı türetilmiş parametreler `studio/data/katalog.js` içindedir.
 
 ## 2. Optik — 412/412C ile birebir aynı tablo
 

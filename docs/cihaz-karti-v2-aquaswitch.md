@@ -16,40 +16,11 @@ Kaynaklar: `docs/referans/spec-sheet-ozeti.md` §3 (künye) · `studio/data/kata
 
 ---
 
-## 1. Künye (✅ spec-sheet-ozeti.md §3, katalog.js PN 1041)
+## 1. Künye — public sürümde çıkarıldı
 
-| Alan | Değer |
-|---|---|
-| Model | AquaSWITCH |
-| PN | 1041 |
-| Tip | Solenoid valfli run-stop nozul — **pompa DEĞİL**, hattaki basınçlı suyu anahtarlar |
-| Boyut (LxWxH) | 160 × 200 × 350 mm (disk Ø160) |
-| Malzeme | Paslanmaz çelik |
-| Ağırlık | 3.5 kg |
-| Güç | Combo Cable, 24 VDC |
-| Kontrol | DMX-RDM **hız kontrollü** run-stop, hızlı tepki |
-| Maks. giriş | 1" NPT |
-| Soket | IP68 |
-| Ops. ışık | AquaLIGHTxC, 4.5–56 W — **solenoid devresiyle BİRLEŞİK** (ek kontrol kartı yok) |
-| Maks yükseklik | **6.0 m** (Ø14/Ø16 nozul eğrisi, aşağıda) |
-
-Jet yüksekliği tablosu (nozul tipine göre, spec-sheet-ozeti.md §3):
-
-| Yükseklik (m) | Ø14: l/dk | Ø14: Bar | Ø16: l/dk | Ø16: Bar |
-|---|---|---|---|---|
-| 2.00 | 58 | 0.89 | 156 | 0.44 |
-| 4.00 | 82 | 1.84 | 204 | 0.84 |
-| 6.00 | 105 | 3.82 | 244 | 1.24 |
-
-DryDECK gömme varyantı (`katalog.js` `arketip: 'drydeck'`, "T-SWITCH"): tek
-solenoid, insan-açık gömme montaj; ayrı künye SWITCH'ten farklı değil (aynı
-valf, farklı gövde kaplaması).
-
-⚠ **Kaynak BULUNAMADI:** valfin gerçek açma/kapama süresi (ms) Aquatronic
-tarafında yayınlanmıyor. Envanter #37'de bulunan tek sektör sayısı — Fontana
-POP Jet "yüksek hız solenoid" **~20 ms** — Aquatronic'in KENDİ ürünü değil,
-yalnız mertebe fikri (aynı sınıf ekipman). Kodda kullanılacaksa [TÜRETİM]
-olarak işaretlenmeli.
+Ürün künye tabloları (parça numarası, ölçü, ağırlık, gerilim, güç) üreticinin
+ürün kataloğuna aittir ve bu public sürümde yer almaz. Motorun simülasyon için
+kullandığı türetilmiş parametreler `studio/data/katalog.js` içindedir.
 
 ## 2. Motorun mevcut hâli (`studio/js/motor.js`)
 

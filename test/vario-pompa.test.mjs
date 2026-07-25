@@ -51,10 +51,8 @@ const TEMEL = PRESETLER.vario;
 
 test('künye: iki VARIO da katalog sayılarını taşır', () => {
   const a = urunBul('AquaVARIO 151'), b = urunBul('AquaVARIO 241');
-  assert.equal(a.pn, 1050);
-  assert.equal(b.pn, 1051);
-  assert.equal(a.pompa.yukseklikM, 3.0);     // ✅katalog s.36 "0 to 3 metres"
-  assert.equal(b.pompa.yukseklikM, 4.5);     // ✅katalog s.34 "4.5 m @Ø12"
+  assert.equal(a.pompa.yukseklikM, 3.0);     // ✅üretici kataloğu "0 to 3 metres"
+  assert.equal(b.pompa.yukseklikM, 4.5);     // ✅üretici kataloğu "4.5 m @Ø12"
   assert.equal(a.pompa.isikW, 22);           // ✅katalog "up to 22W RGBW"
   assert.equal(b.pompa.isikW, 72);           // ✅katalog "up to 72W RGBW"
   assert.deepEqual(a.pompa.boyM, [0.328, 0.150, 0.200]);

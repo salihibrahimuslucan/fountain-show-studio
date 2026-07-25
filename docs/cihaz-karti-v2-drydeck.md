@@ -46,52 +46,11 @@ yani Bucket = katalogun bahsettiği "profesyonel, daha yüksek atan" şov sürü
 
 ---
 
-## 1. Künye — dört varyant (✅ katalog s.38-41, s.48-49 birebir)
+## 1. Künye — public sürümde çıkarıldı
 
-| | **VARIO DryDECK** (flush) | **VARIO DryDECK Bucket** | **SWITCH DryDECK (T-SWITCH)** | **SWITCH D.D Bucket** |
-|---|---|---|---|---|
-| Katalog MODEL adı | DryDECK AquaVARIO | DryDECK AquaVARIO Bucket | DryDECK T-SWITCH | AquaSWITCH D.D Bucket |
-| Ölçü | **300×300×368 mm** | **Ø280×459 mm** | **300×300×350 mm** | **Ø280×459 mm** |
-| Malzeme | Paslanmaz çelik | Paslanmaz çelik | Paslanmaz çelik | Paslanmaz çelik |
-| Ağırlık | 7 kg | **15 kg** | 7 kg | **11 kg** |
-| Gerilim | 24 VDC | 24 VDC | 24 VDC | 24 VDC |
-| Güç | 18 W | 18 W | **(yazmıyor)** | 18 W |
-| Akım | **1.5 A** | **5 A** | **0.8 A** | **0.8 A** |
-| **Maks basınç** | **0.3 bar** | **0.5 bar** | **1 bar** | **1 bar** |
-| Kablo | Combo Cable | Combo Cable | Combo Cable | Combo Cable |
-| **Maks su yüksekliği** | ⛔ **KATALOGDA YOK** | ⛔ YOK | ⛔ YOK | ⛔ YOK |
-
-Ortak (✅ s.38): **2 farklı nozul tipi** · RGB veya RGBW power LED (OPSİYONEL) ·
-DMX-RDM kontrollü · paslanmaz gövde · Syncronorm Depence kütüphaneli ·
-zeminle hemyüz, **sıfır su seviyesi** ("dry pool").
-
-Üst plaka seçenekleri (✅ s.38, s.48):
-- **Yuvarlak Ø280, kalınlık 5 mm** (tutucusuyla)
-- **Kare 30×30 cm "Premium", kalınlık 30 mm** (tutucusuyla)
-
-### ⚠ Karakter kartındaki eski satır DÜZELTİLDİ
-
-`cihaz-karakter-kartlari.md` şöyle diyordu:
-> *"GÖVDE: gömme; üst plaka Ø280 (5 mm) veya kare 300×300 (30 mm); **maks 1 bar**."*
-
-Plaka bilgisi ✅ doğru. Ama **"maks 1 bar" aşırı genellemedir** — dört varyanttan
-yalnız ikisine (SWITCH tarafına) aittir. VARIO tarafı **0.3 / 0.5 bar**'dır, yani
-üçte biri. Tek preset'le dört ürünü temsil etmenin bedeli tam burada görünüyor.
-
-### ⚠ Katalog iç tutarsızlıkları (uydurulmadı, işaretlendi)
-
-1. **18 W ↔ 1.5 A çelişkisi.** 24 V'ta 18 W = 0.75 A; künye 1.5 A (= 36 W) diyor.
-   İkisi aynı anda doğru olamaz. Okumam: **1.5 A pompanın toplam çekişi (36 W),
-   18 W ise opsiyonel LED / kontrol tarafı.** → [ELLE] D3
-2. **s.41 metni yanlış ürünü anlatıyor.** AquaVARIO DryDECK Bucket sayfasının gövde
-   metni *"The innovative **DryDECK Switch** features..."* diye başlıyor — SWITCH
-   Bucket sayfasının (s.48) metniyle neredeyse birebir aynı. Kopyala-yapıştır.
-   0.1 s ve tek-solenoid iddiası **iki üründe de** geçtiği için ikisine de uygulandı.
-3. **T-SWITCH'te POWER (W) satırı yok**, yalnız 0.8 A var (= 19.2 W, diğerlerinin
-   18 W'ıyla uyumlu).
-4. **Ürün numaraları (PN) hiçbir DryDECK'te yok.** Bu benim bulamamam değil:
-   `URUN_KUNYE.md` kendi §"Eksik/belirsiz künye verisi" maddesinde
-   **"DryDECK PN'leri"**ni zaten eksik ilan ediyor.
+Ürün künye tabloları (parça numarası, ölçü, ağırlık, gerilim, güç) üreticinin
+ürün kataloğuna aittir ve bu public sürümde yer almaz. Motorun simülasyon için
+kullandığı türetilmiş parametreler `studio/data/katalog.js` içindedir.
 
 ## 2. Çapraz doğrulama — Aquatronic'in sayıları fizikle TUTUYOR
 

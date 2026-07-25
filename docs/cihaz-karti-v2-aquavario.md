@@ -19,7 +19,7 @@ Etiketler: ✅ katalogdan doğrulandı · 🔬 bağımsız sektör kaynağı · 
 
 Karar gereği kaynak Salih'in çekimine bağlı DEĞİL. İki bacak:
 
-**A) Aquatronic katalog s.34-37** — TECHNICAL DETAILS tabloları + yükseklik
+**A) Aquatronic üretici kataloğu** — TECHNICAL DETAILS tabloları + yükseklik
 grafiği (12/14/16 mm eğrileri, 0-4.5 m ekseni) + gövde metni. Metin katmanından
 birebir okundu, aşağıdaki §1 tablosu.
 
@@ -47,27 +47,11 @@ Bunlar kodda [TEMSİLİ] görsel ayar olarak duruyor, fizik sabiti gibi davranı
 
 ---
 
-## 1. Künye (✅ katalog s.34-37 birebir)
+## 1. Künye — public sürümde çıkarıldı
 
-| | **AquaVARIO 151** | **AquaVARIO 241** |
-|---|---|---|
-| PN | 1050 | 1051 |
-| Ölçü L×M×H | **328 × 150 × 200 mm** | **328 × 147 × 143 mm** |
-| Ağırlık | 7 kg | 5 kg |
-| Gerilim | 24 VDC | 24 VDC (36 VDC ops) |
-| Güç | 120/150 W | 240 W |
-| Akım | 5.5 A | 10 A |
-| Maks basınç | 0.5 bar | 0.5 bar |
-| **Maks su yüksekliği** | **3.0 m** ("0 to 3 metres, in the blink of an eye") | **4.5 m @Ø12** · 4.35 m @Ø14 |
-| Ops. AquaLIGHT-C | **≤22 W RGBW** | **≤72 W RGBW** |
-
-Ortak: mühendislik termoplastik gövde + paslanmaz çelik ayak · dalgıç · IP68 tek
-Combo Cable · **DMX-RDM hız kontrolü** · 1" NPT pirinç çıkış · aşırı akım koruması ·
-Depence kütüphaneli · nozul **Ø12 / Ø14 / Ø16**. Katalog güç serisi: 120-150-240-270 W.
-
-**⚠ Katalog iç tutarsızlığı:** s.36 şeması "AquaVARIO 151 / **AquaVARIO 251**"
-yazıyor — 251 diye bir ürün künyede yok, 241'in dizgi hatası.
-→ ❓ **[ELLE] V0:** 251 diye ayrı bir model var mı, yoksa hata mı? (Hata kabul ettim.)
+Ürün künye tabloları (parça numarası, ölçü, ağırlık, gerilim, güç) üreticinin
+ürün kataloğuna aittir ve bu public sürümde yer almaz. Motorun simülasyon için
+kullandığı türetilmiş parametreler `studio/data/katalog.js` içindedir.
 
 ## 2. Çapraz doğrulama — künye sayıları fizikle TUTUYOR
 

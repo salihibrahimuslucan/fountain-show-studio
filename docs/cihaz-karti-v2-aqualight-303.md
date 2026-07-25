@@ -15,30 +15,11 @@ Etiketler: ✅ spec-sheet-ozeti'nden doğrulandı · ⚠ çıkarım/tutarsızlı
 
 ---
 
-## 1. Künye (✅ spec-sheet-ozeti §11 birebir)
+## 1. Künye — public sürümde çıkarıldı
 
-| Alan | Değer |
-|---|---|
-| Model | AquaLIGHT 303 |
-| Boyut (ØxH) | 110 × 62 mm (flanş Ø110, iç gövde Ø79 — çizimden) |
-| Voltaj | 24 VDC |
-| Güç | 9W (PDF'te böyle, boşluksuz basılı) |
-| Akım | 0.4 A |
-| Renkler | **RGB (beyaz kanal YOK)** |
-| LED tipi | Edison PowerLED, onboard driver, alüminyum PCB |
-| Işık akısı | 512 lm (RGB full) |
-| Güç & DMX | Combo Cable |
-| Kontrol | DMX + RDM |
-| Koruma | IP68 |
-| Malzeme | Paslanmaz çelik, temperli cam |
-| Ağırlık | 1 kg |
-| Ürün No | 3019 |
-| Simülasyon kütüphanesi | Syncronorm Depence Library mevcut |
-
-Sloganı: *"Illuminate Excellence with AquaLIGHT 303!"* — RGB ana renklerinin
-her biri eşit parlaklıkta ölçülmüş, homojen renk karışımı vurgusu. **Gelişmiş
-sıcaklık kontrolü + termal koruma** sayesinde kuru ortamda da güvenle monte
-edilebilir diye ayrıca belirtilmiş (açık alan çeşmeleri için).
+Ürün künye tabloları (parça numarası, ölçü, ağırlık, gerilim, güç) üreticinin
+ürün kataloğuna aittir ve bu public sürümde yer almaz. Motorun simülasyon için
+kullandığı türetilmiş parametreler `studio/data/katalog.js` içindedir.
 
 ## 2. Optik — STARLIGHT 403 ile BİREBİR AYNI tablo
 

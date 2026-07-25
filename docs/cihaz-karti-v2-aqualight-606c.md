@@ -15,33 +15,11 @@ Etiketler: ✅ spec-sheet-ozeti'nden doğrulandı · ⚠ çıkarım/tutarsızlı
 
 ---
 
-## 1. Künye (✅ spec-sheet-ozeti §2 birebir)
+## 1. Künye — public sürümde çıkarıldı
 
-| Alan | Değer |
-|---|---|
-| Model | AquaLIGHT 606 C |
-| Boyut (ØxH) | 160 × 70 mm |
-| Voltaj | 24 VDC |
-| Güç | 30 W |
-| Akım | 1.25 A |
-| Renkler | **RGBACL** (R + G + B + Amber + Cyan + Lime) — 6 renk kanalı |
-| LED tipi | CREE / Edison PowerLED, onboard driver |
-| Işık akısı | 3000 lm (RGBACL full) |
-| Güç & DMX | Combo Cable |
-| Kontrol | DMX + RDM |
-| Koruma | IP68 |
-| Malzeme | Paslanmaz çelik, temperli cam |
-| Ağırlık | 1.3 kg |
-| Renk kombinasyonu | ~281 trilyon ("281 Trillion Colors" sloganı) |
-| Ürün No | **PDF'te basılı değil** (606C için ürün no basılmamış) |
-
-**606 (C'siz) varyant:** Ayrı bir PDF sayfası olarak "AquaLIGHT 606" listeli;
-künye değerleri 606C ile **birebir aynı** (160×70, 24 VDC, 30 W, 1.25 A,
-RGBACL, Combo Cable, 3000 lm, 1.3 kg). Görünür fark yalnız bağlantı
-şemasında: 606'da cihazlar BlackBOX'a bireysel kablolarla yıldız topolojide
-iniyor, 606C'de boru üstünde zincirleme (daisy-chain benzeri) diziliyor. PDF
-metni farkı açıkça tanımlamıyor. ("C" = merkez nozul deliği tanımı burada da
-407/412 ailesinden ödünç alınan çıkarım, PDF'te 606 için ayrıca yazılmıyor.)
+Ürün künye tabloları (parça numarası, ölçü, ağırlık, gerilim, güç) üreticinin
+ürün kataloğuna aittir ve bu public sürümde yer almaz. Motorun simülasyon için
+kullandığı türetilmiş parametreler `studio/data/katalog.js` içindedir.
 
 ## 2. Optik — ⚠ LENS TABLOSU PDF'TE YOK
 

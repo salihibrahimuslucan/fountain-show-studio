@@ -21,29 +21,11 @@ Kaynaklar: `docs/referans/spec-sheet-ozeti.md` §13-14 (künye) ·
 
 ---
 
-## 1. Künye (✅ spec-sheet-ozeti.md §13-14, katalog.js PN 1080/1081)
+## 1. Künye — public sürümde çıkarıldı
 
-| Alan | **AquaJUMP** | **AquaJUMP GIANT** |
-|---|---|---|
-| PN | 1080 | 1081 |
-| Boyut (LxMxH) | 140×240×480 mm | 350×330×615 mm |
-| Ağırlık | 15 kg | 25 kg |
-| Güç | 40 W, 24 VDC, 1.8 A | 40 W, 24 VDC, 1.8 A |
-| Su girişi / nozul | 32 mm / **Ø12 mm** | 32 mm / **Ø16 mm** |
-| Gövde açısı (şema) | **~30°** dikeyden | **~35°** dikeyden |
-| Maks basınç | (yazmıyor) | 0.5 bar |
-| Tepe yüksekliği (grafik okuma) | ~1.5 m (80°'de) | ~3.0 m (80°'de) / menzil ~5.5 m |
-| Işık | katalogda LED spec YOK (ışıksız okundu) | RGBW-LED entegre (nozul ağzı) |
-| Fonksiyon | **Slice/On-Off** — kesme/kesikli parabolik ark | aynı |
-| Kontrol | DMX-RDM, Combo Cable, Depence kütüphaneli | aynı |
-
-Salih doğrulaması (spec-sheet-ozeti.md §14, 2026-07-21): **"GIANT sadece
-büyük boy — davranış AquaJUMP ile aynı, ayrı spec gerekmez."**
-
-⚠ **Kaynak BULUNAMADI:** kesme (slice) süresi hiçbir katalog sayfasında
-sayısal olarak yok — yalnız "Slice/On-Off Function" yazıyor. Yatay menzil
-(~4 m JUMP, ~5.5 m GIANT) da resmi tabloda yok, yalnız grafik okuması
-[TÜRETİM].
+Ürün künye tabloları (parça numarası, ölçü, ağırlık, gerilim, güç) üreticinin
+ürün kataloğuna aittir ve bu public sürümde yer almaz. Motorun simülasyon için
+kullandığı türetilmiş parametreler `studio/data/katalog.js` içindedir.
 
 ## 2. Motorun mevcut hâli
 

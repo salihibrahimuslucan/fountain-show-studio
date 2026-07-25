@@ -21,30 +21,11 @@ kolon — ROBO'nun İNCE-BERRAK karakterinin TAM TERSİ, kapsam dışı). Ayrıc
 
 ---
 
-## 1. Künye (✅ spec-sheet-ozeti.md §12, katalog.js PN 1001)
+## 1. Künye — public sürümde çıkarıldı
 
-| Alan | Değer |
-|---|---|
-| Model | AquaROBO |
-| PN | 1001 |
-| Boyut (LxMxH) | 600 × 727 × 730 mm |
-| Malzeme | Paslanmaz çelik |
-| Ağırlık | 18 kg |
-| Güç | 48 W, 24 VDC, 2 A |
-| Kontrol | DMX-RDM, Combo Cable (güç+DMX tek kablo) |
-| Su girişi / nozul çıkışı | 2" NPT / 1½" |
-| Maks basınç | 3.3 bar |
-| Nozul seçenekleri | Ø17 / Ø20 / Ø23 (flanş bağlantılı) |
-| Hareket | **2 eksen servo, her eksen 180° (±90°)**, 9-dof IMU (nozul konumu için) |
-| Komutlar | Park (nozul yatay) / Zero (nozul dikey), ~90° arayla |
-| Ops. ışık | AquaLIGHT ×2, nozulla BİRLİKTE hareket eder |
-| **Maks yükseklik** | **20.0 m** (Ø20/Ø23, 20m→360-443 l/dk @1.9-2.3 bar) |
-
-Debi tablosu (Ø17/Ø20/Ø23, spec-sheet-ozeti.md §12): 2m→88-124 l/dk, 10m→200-350,
-20m→360-443 (yalnız Ø20/Ø23 20 m'ye çıkar, Ø17 12.5 m'de tavanlanır).
-
-⚠ **Kaynak BULUNAMADI:** servo açısal hızı (°/s) hiçbir katalog sayfasında
-yok — yalnız açı sınırı (±90°) yayınlanmış. Kodda kullanılacaksa [TÜRETİM].
+Ürün künye tabloları (parça numarası, ölçü, ağırlık, gerilim, güç) üreticinin
+ürün kataloğuna aittir ve bu public sürümde yer almaz. Motorun simülasyon için
+kullandığı türetilmiş parametreler `studio/data/katalog.js` içindedir.
 
 ## 2. Motorun mevcut hâli
 

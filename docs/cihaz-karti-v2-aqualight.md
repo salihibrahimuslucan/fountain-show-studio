@@ -4,7 +4,7 @@ v7 "cihaz birebir" turu, TUR 1. Süreç adımı **2 (KART v2)** tamamlandı →
 sıradaki **adım 3 [ELLE] onay kapısı** (Salih okur, düzeltir; onaysız KOD YOK).
 
 Kaynaklar:
-- Yerel: `dahili katalog metni` (katalog s.58-62),
+- Yerel: `dahili katalog metni` (üretici kataloğu),
   `URUN_KUNYE.md` §4, `product-dev/` ürün render'ları + `companents/light/` parça kütüphanesi
 - Sektör + fizik: `docs/2026-07-18-su-alti-isik-referansi.md`
 
@@ -12,27 +12,11 @@ Etiketler: ✅ katalogdan doğrulandı · ⚠ çıkarım · ❓ Salih'e soru · 
 
 ---
 
-## 1. Künye (✅ katalog s.58-62 birebir)
+## 1. Künye — public sürümde çıkarıldı
 
-| | 406 | 406 C | 412 | 412 C |
-|---|---|---|---|---|
-| PN | 3025 | 3045 | 3026 | 3046 |
-| Ölçü Ø×H | 160 × 70 mm | aynı | aynı | aynı |
-| Gerilim | 24 VDC | 24 VDC | 24 VDC | 24 VDC |
-| Güç | 24 W | 24 W | 48 W | 48 W |
-| Akım | 1 A | 1 A | 2 A | 2 A |
-| Akı (RGB full) | 1746 lm | 1746 lm | 4620 lm | 4620 lm |
-| Renk | RGB+WW / RGB+AA | aynı | aynı | aynı |
-| Ağırlık | 1.3 kg | 1.5 kg | 1.3 kg | 1.5 kg |
-
-Ortak: CREE/Edison PowerLED · sürücü cihaz içinde · IP68 · paslanmaz gövde ·
-temperli cam · **DMX + RDM** · tek Combo Cable (24V + DMX birlikte).
-
-**"C" tanımı ✅** (`URUN_KUNYE.md` s.120): *merkezli-nozul versiyonu, elektriksel
-olarak AYNI*. Fark yalnız mekanik: merkez delik (nozul geçer) + 200 g. Parça
-kütüphanesi bunu doğruluyor: `delikli cam.png`↔`deliksiz cam.png`,
-`delikli tas.png`↔`deliksiz tas.png`. C tipi DryDECK Ø280 / 300×300 üst plakaya
-gömülür; non-C'de U profil tutucu (140/30 mm).
+Ürün künye tabloları (parça numarası, ölçü, ağırlık, gerilim, güç) üreticinin
+ürün kataloğuna aittir ve bu public sürümde yer almaz. Motorun simülasyon için
+kullandığı türetilmiş parametreler `studio/data/katalog.js` içindedir.
 
 ## 2. Optik — 60° / 10° iddiası ✅ DOĞRULANDI, sayısal olarak
 

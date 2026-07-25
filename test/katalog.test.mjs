@@ -40,29 +40,30 @@ test('eski-ad koprusu: v3 .aqshow adlari cozulur (geriye uyum)', () => {
   assert.equal(urunCoz('AquaJET'), 'aquajet');
   assert.equal(urunCoz('DryDECK'), 'drydeck');
 });
-test('kunye omurgasi: kilit PNler dogru', () => {
-  const pn = ad => KATALOG.find(u => u.ad === ad)?.pn;
-  assert.equal(pn('AquaROBO'), 1001);
-  assert.equal(pn('AquaSWITCH'), 1041);
-  assert.equal(pn('AquaJUMP'), 1080);
-  assert.equal(pn('AquaLIGHT 412C'), 3046);
-  assert.equal(pn('CLASSIC WATER CURTAIN'), 1270);
+test('kunye omurgasi: kilit urunler katalogda', () => {
+  // PN iddialari public surumde kaldirildi (parca numaralari ureticiye ait).
+  // Omurga kontrolu ada gore yapilir.
+  for (const ad of ['AquaROBO', 'AquaSWITCH', 'AquaJUMP', 'AquaLIGHT 412C',
+                    'CLASSIC WATER CURTAIN']) {
+    assert.ok(KATALOG.find(u => u.ad === ad), ad + ' katalogda yok');
+  }
 });
 
 // --- v7 TUR 1 / KART v2: non-C kayıtları + gövde/optik alanları ---------------
 
 test('KART v2 §1: 406/406C/412/412C dortlusu birebir kunye tasir', () => {
-  // Otorite: docs/cihaz-karti-v2-aqualight.md tablosu — PN/guc/lumen/renk.
+  // Optik parametreler (guc/lumen/LED sayisi) motorun ISIK MODELINI besler —
+  // simulasyon bunlarla hesaplar, o yuzden dogrulanir. PN ticari kimliktir,
+  // motorda karsiligi yok → public surumde tutulmaz.
   const bekle = [
-    ['AquaLIGHT 406',  3025, '24 W', 1746, 12, false],
-    ['AquaLIGHT 406C', 3045, '24 W', 1746, 12, true],
-    ['AquaLIGHT 412',  3026, '48 W', 4620, 24, false],
-    ['AquaLIGHT 412C', 3046, '48 W', 4620, 24, true],
+    ['AquaLIGHT 406',  '24 W', 1746, 12, false],
+    ['AquaLIGHT 406C', '24 W', 1746, 12, true],
+    ['AquaLIGHT 412',  '48 W', 4620, 24, false],
+    ['AquaLIGHT 412C', '48 W', 4620, 24, true],
   ];
-  for (const [ad, pn, guc, lumen, ledSayisi, merkezDelik] of bekle) {
+  for (const [ad, guc, lumen, ledSayisi, merkezDelik] of bekle) {
     const u = urunBul(ad);
     assert.ok(u, ad + ' katalogda yok');
-    assert.equal(u.pn, pn, ad + ' PN');
     assert.equal(u.teknik.guc, guc, ad + ' guc');
     assert.equal(u.teknik.lumen, lumen, ad + ' lumen');
     assert.equal(u.teknik.renk, 'RGB+WW/AA', ad + ' renk');

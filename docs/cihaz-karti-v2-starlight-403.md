@@ -15,35 +15,11 @@ Etiketler: ✅ spec-sheet-ozeti'nden doğrulandı · ⚠ çıkarım/tutarsızlı
 
 ---
 
-## 1. Künye (✅ spec-sheet-ozeti §8 birebir)
+## 1. Künye — public sürümde çıkarıldı
 
-| Alan | Değer |
-|---|---|
-| Model | **⚠ isim çelişkisi — bkz. kutu aşağıda** |
-| Boyut (ØxH) | 110 × 62 mm (flanş Ø110, iç gövde Ø79) |
-| Voltaj | 24 VDC |
-| Güç | 12 W |
-| Akım | 0.38 A |
-| Renkler | RGBW, 4-in-1 LED |
-| LED tipi | Edison PowerLED, onboard driver |
-| Işık akısı | 1155 lm (RGB full) |
-| Güç & DMX | Combo Cable |
-| Kontrol | DMX + RDM |
-| Koruma | IP68 |
-| Malzeme | Paslanmaz çelik, temperli cam |
-| Ağırlık | 1 kg |
-| Ürün No | 3012 |
-
-> **⚠ MODEL ADI ÇELİŞKİSİ (spec-sheet-ozeti §8'den taşındı):** *"Teknik
-> tabloda 'AquaLIGHT 403' yazıyor — kapakta STARLIGHT 403; aynı ürün, tabloda
-> eski/aile adı."* Yani PDF'in künye tablosunda AquaLIGHT ailesi ismi geçiyor,
-> pazarlama/kapak sayfasında STARLIGHT markası kullanılıyor — İKİSİ DE AYNI
-> fiziksel ürünü işaret ediyor, iki farklı ürün DEĞİL.
-
-> **⚠ Ürün No çakışması:** 3012, spec-sheet-ozeti §9'daki AquaLIGHT 412'nin
-> de ürün numarası olarak basılı (o kartta da not düşülmüş). PDF dizgi hatası
-> olması kuvvetle muhtemel — sipariş kodu olarak kullanılacaksa sahadan
-> doğrulanmalı.
+Ürün künye tabloları (parça numarası, ölçü, ağırlık, gerilim, güç) üreticinin
+ürün kataloğuna aittir ve bu public sürümde yer almaz. Motorun simülasyon için
+kullandığı türetilmiş parametreler `studio/data/katalog.js` içindedir.
 
 ## 2. Optik — 60°/10° lens ailesiyle aynı formül, farklı menzil bandı
 

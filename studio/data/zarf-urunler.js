@@ -44,7 +44,7 @@ export const URUN_ZARFLARI = {
     montaj: 'islak_havuz', gomme: false, ustPlaka: null, yasalTavan: null,
     maksTepeM: 3.0, tipikTepeM: null, salvo: null, servo: null,
     kaynak: 'katalog',
-    gerekce: 'Adım 1: katalog.js pompa.yukseklikM = 3.0 (katalog s.34-37 "0→3 m" @Ø12). Tek maksimum, aralık yok → tipik TIPIK_ORAN ile türetilir.',
+    gerekce: 'Adım 1: katalog.js pompa.yukseklikM = 3.0 (üretici kataloğu "0→3 m" @Ø12). Tek maksimum, aralık yok → tipik TIPIK_ORAN ile türetilir.',
   },
   'AquaVARIO 241': {
     montaj: 'islak_havuz', gomme: false, ustPlaka: null, yasalTavan: null,

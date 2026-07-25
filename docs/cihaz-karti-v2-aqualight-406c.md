@@ -14,32 +14,11 @@ Etiketler: ✅ spec-sheet-ozeti'nden doğrulandı · ⚠ çıkarım/tutarsızlı
 
 ---
 
-## 1. Künye (✅ spec-sheet-ozeti §1 birebir)
+## 1. Künye — public sürümde çıkarıldı
 
-| Alan | Değer |
-|---|---|
-| Model | AquaLIGHT 406 C |
-| Boyut (ØxH) | 160 × 70 mm |
-| Voltaj | 24 VDC |
-| Güç | 24 W |
-| Akım | 1 A |
-| Renkler | RGB+WW / RGB+AA (6 RGB LED + 6 natural white LED **veya** 6 amber LED = toplam 12 LED) |
-| LED tipi | CREE / Edison PowerLED, driver devresi gövdede (onboard) |
-| Işık akısı | 1746 lm (RGB full) |
-| Güç & DMX | Combo Cable (tek kabloda 24 VDC + DMX sinyali) |
-| Kontrol | DMX + RDM |
-| Koruma | IP68 |
-| Malzeme | Paslanmaz çelik gövde, temperli cam |
-| Ağırlık | 1.5 kg |
-| Ürün No | 3045 |
-| Simülasyon kütüphanesi | Syncronorm Depence Library mevcut |
-
-**"C" ne demek?** Spec-sheet-ozeti kendi içinde bu tanımı yalnız 412 bölümünde
-(§9, satır 376-377) veriyor — 412C = *"412'nin ortası delik, nozul geçişli
-versiyonu; geri kalan tüm teknik değerler aynı"* (Salih doğrulaması,
-2026-07-21). Aynı desen 406/406C çiftine de uygulanır: 406 (bu kartın
-kardeşi, `-406.md`) gövde ve elektriksel olarak birebir aynı, fark yalnız
-merkez nozul deliği.
+Ürün künye tabloları (parça numarası, ölçü, ağırlık, gerilim, güç) üreticinin
+ürün kataloğuna aittir ve bu public sürümde yer almaz. Motorun simülasyon için
+kullandığı türetilmiş parametreler `studio/data/katalog.js` içindedir.
 
 ## 2. Optik — 60°/10° lens ailesi ✅ birebir (412/412C ile aynı tablo)
 

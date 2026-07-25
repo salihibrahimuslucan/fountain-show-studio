@@ -13,7 +13,7 @@ function grupSil(grup) {
   grup.parent?.remove(grup);
 }
 
-// AquaLIGHT 412 / 412C / 406 / 406C — KART v2 §1 künyesi (katalog s.58-62):
+// AquaLIGHT 412 / 412C / 406 / 406C — KART v2 §1 künyesi (üretici kataloğu):
 // Ø160 × 70 mm basık puck, cıvatalı paslanmaz jant, temperli düz cam, tek
 // halkada AYRIK LED (halka çapı = 0.7×gövde çapı → r*0.7 yarıçap), "C"
 // versiyonunda merkez ALTIGEN nozul geçişi. Sürekli torus değil ayrık nokta —
@@ -91,7 +91,7 @@ export function bosGovde() {
 // 1" port + nozul; nozul dibinde opsiyonel AquaLIGHT-C halka (setRenk buradan).
 // AquaVARIO 151/241 — YATAY termoplastik pompa silindiri + paslanmaz ayak +
 // gövde ÜSTÜNDE dik 1" NPT pirinç çıkış + nozul; ops. AquaLIGHT-C halka.
-// v7 TUR 2: ölçüler künyeden BİREBİR gelir (katalog s.34-37, L×M×H metre):
+// v7 TUR 2: ölçüler künyeden BİREBİR gelir (üretici kataloğu, L×M×H metre):
 //   151 → [0.328, 0.150, 0.200]   (Ø150 gövde + 50 mm rayzır → daha dik siluet)
 //   241 → [0.328, 0.147, 0.143]   (neredeyse yalnız silindir → basık siluet)
 // Yani iki modelin gövde farkı UYDURMA DEĞİL: aynı uzunluk, farklı toplam
